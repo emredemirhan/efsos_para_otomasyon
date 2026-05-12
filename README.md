@@ -14,6 +14,24 @@ https://raw.githubusercontent.com/emredemirhan/efsos_para_otomasyon/main/dist/pa
 
 Bu link açıldığında Tampermonkey kurulum ekranı gelir. Güncelleme yayınlamak için sürümü artırıp tekrar build alarak aynı repo'ya pushlamak yeterlidir.
 
+## Otomatik Yayınlama
+
+`main` branch'ine `src/`, `scripts/`, `tests/` veya paket dosyalarında değişiklik pushlanınca GitHub Actions otomatik olarak:
+
+- bağımlılıkları kurar,
+- testleri çalıştırır,
+- patch versiyonu artırır,
+- `dist/parasut.user.js` dosyasını yeniden build eder,
+- `package.json`, `package-lock.json` ve `dist/parasut.user.js` değişikliklerini `chore: build userscript [skip ci]` commit'iyle `main` branch'ine pushlar.
+
+Bu commit GitHub'a düştükten sonra Tampermonkey `@version` değiştiğini görür ve karşı taraf manuel `Update` dediğinde yeni sürümü çeker.
+
+Lokalden aynı işlemi tek komutla yapmak gerekirse:
+
+```bash
+npm run release:patch
+```
+
 Geliştirme sonrası userscript çıktısını üretmek için:
 
 ```bash
