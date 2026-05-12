@@ -9,6 +9,7 @@ const banner = `// ==UserScript==
 // @version      ${packageJson.version}
 // @description  Excel satırlarından seçilen kaydı Paraşüt gider formuna manuel doldurur
 // @match        https://uygulama.parasut.com/*
+// @exclude      https://uygulama.parasut.com/*render_trinity_iframe=true*
 // @updateURL    https://raw.githubusercontent.com/emredemirhan/efsos_para_otomasyon/main/dist/parasut.user.js
 // @downloadURL  https://raw.githubusercontent.com/emredemirhan/efsos_para_otomasyon/main/dist/parasut.user.js
 // @run-at       document-idle

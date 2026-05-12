@@ -1,9 +1,10 @@
 // ==UserScript==
 // @name         Parasut Gider Formu Excel Doldurucu
 // @namespace    ajans-parasut
-// @version      1.2.12
+// @version      1.2.13
 // @description  Excel satırlarından seçilen kaydı Paraşüt gider formuna manuel doldurur
 // @match        https://uygulama.parasut.com/*
+// @exclude      https://uygulama.parasut.com/*render_trinity_iframe=true*
 // @updateURL    https://raw.githubusercontent.com/emredemirhan/efsos_para_otomasyon/main/dist/parasut.user.js
 // @downloadURL  https://raw.githubusercontent.com/emredemirhan/efsos_para_otomasyon/main/dist/parasut.user.js
 // @run-at       document-idle
@@ -583,8 +584,17 @@
       return true;
     }
   }
+  function isTrinityRenderFrame() {
+    try {
+      return new URLSearchParams(window.location.search).get(
+        "render_trinity_iframe"
+      ) === "true";
+    } catch {
+      return window.location.href.includes("render_trinity_iframe=true");
+    }
+  }
   function shouldRunInThisFrame() {
-    return !isIframe();
+    return !isIframe() && !isTrinityRenderFrame();
   }
   function removeDuplicatePanels() {
     $$(`#${PANEL_ID}`).forEach((panel, index) => {

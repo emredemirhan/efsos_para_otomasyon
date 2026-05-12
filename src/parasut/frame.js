@@ -9,8 +9,18 @@ export function isIframe() {
   }
 }
 
+export function isTrinityRenderFrame() {
+  try {
+    return new URLSearchParams(window.location.search).get(
+      "render_trinity_iframe",
+    ) === "true";
+  } catch {
+    return window.location.href.includes("render_trinity_iframe=true");
+  }
+}
+
 export function shouldRunInThisFrame() {
-  return !isIframe();
+  return !isIframe() && !isTrinityRenderFrame();
 }
 
 export function removeDuplicatePanels() {
