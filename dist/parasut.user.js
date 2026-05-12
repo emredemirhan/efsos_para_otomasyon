@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Parasut Gider Formu Excel Doldurucu
 // @namespace    ajans-parasut
-// @version      1.2.9
+// @version      1.2.10
 // @description  Excel satırlarından seçilen kaydı Paraşüt gider formuna manuel doldurur
 // @match        https://uygulama.parasut.com/*
 // @updateURL    https://raw.githubusercontent.com/emredemirhan/efsos_para_otomasyon/main/dist/parasut.user.js
