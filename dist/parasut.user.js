@@ -448,12 +448,22 @@
   }
 
   // src/parasut/pageDetection.js
-  function getAppPathname() {
+  function getWindowPathname(targetWindow) {
     try {
-      return window.top?.location?.pathname || location.pathname;
+      return targetWindow?.location?.pathname || "";
     } catch {
-      return location.pathname;
+      return "";
     }
+  }
+  function getAppPathname() {
+    const currentPathname = getWindowPathname(window);
+    const topPathname = getWindowPathname(window.top);
+    return [currentPathname, topPathname].find(
+      (pathname) => /\/fis-faturalar(?:\/|$)/.test(pathname)
+    ) || topPathname || currentPathname || location.pathname;
+  }
+  function hasVisiblePaymentForm(root) {
+    return $$("[data-tns='add-payment']", root).some(isVisible);
   }
   function isExpenseFormPage() {
     return /\/fis-faturalar\/yeni(?:\/hizli)?\/?$/.test(
@@ -462,7 +472,7 @@
   }
   function isPurchaseBillShowPage(root = getActiveAppDocument()) {
     const pathname = getAppPathname();
-    return /\/fis-faturalar\/\d+\/?$/.test(pathname) || /\/fis-faturalar(?:\/|$)/.test(pathname) && (Boolean($("input[data-tid='record-id'][data-ttype='page']", root)) || Boolean($("[data-tns='purchase-bills-show']", root)));
+    return /\/fis-faturalar\/\d+(?:\/.*)?\/?$/.test(pathname) || /\/fis-faturalar(?:\/|$)/.test(pathname) && (Boolean($("input[data-tid='record-id'][data-ttype='page']", root)) || Boolean($("[data-tns='purchase-bills-show']", root)) || hasVisiblePaymentForm(root));
   }
 
   // src/parasut/supplier.js
