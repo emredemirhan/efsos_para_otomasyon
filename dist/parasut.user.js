@@ -7,6 +7,7 @@
 // @updateURL    https://raw.githubusercontent.com/emredemirhan/efsos_para_otomasyon/main/dist/parasut.user.js
 // @downloadURL  https://raw.githubusercontent.com/emredemirhan/efsos_para_otomasyon/main/dist/parasut.user.js
 // @run-at       document-idle
+// @noframes
 // @grant        none
 // ==/UserScript==
 (() => {
@@ -455,24 +456,55 @@
       return "";
     }
   }
+  function getTrinityIframePathnames() {
+    return $$("iframe[name='trinity-iframe'], iframe[data-type='trinity']").map((iframe) => getWindowPathname(iframe.contentWindow)).filter(Boolean);
+  }
   function getAppPathname() {
     const currentPathname = getWindowPathname(window);
     const topPathname = getWindowPathname(window.top);
-    return [currentPathname, topPathname].find(
+    const iframePathnames = getTrinityIframePathnames();
+    return [currentPathname, topPathname, ...iframePathnames].find(
       (pathname) => /\/fis-faturalar(?:\/|$)/.test(pathname)
-    ) || topPathname || currentPathname || location.pathname;
+    ) || iframePathnames[0] || topPathname || currentPathname || location.pathname;
   }
   function hasVisiblePaymentForm(root) {
     return $$("[data-tns='add-payment']", root).some(isVisible);
   }
-  function isExpenseFormPage() {
-    return /\/fis-faturalar\/yeni(?:\/hizli)?\/?$/.test(
-      getAppPathname()
+  function matchesExpenseFormPath(pathname) {
+    return /\/fis-faturalar\/yeni(?:\/hizli)?\/?$/.test(pathname);
+  }
+  function matchesPurchaseBillShowPath(pathname) {
+    return /\/fis-faturalar\/\d+(?:\/.*)?\/?$/.test(pathname);
+  }
+  function getPageDetectionSnapshot(root = getActiveAppDocument()) {
+    const pathname = getAppPathname();
+    const hasRecordId = Boolean(
+      $("input[data-tid='record-id'][data-ttype='page']", root)
     );
+    const hasPurchaseBillShow = Boolean($("[data-tns='purchase-bills-show']", root));
+    const hasPaymentForm = hasVisiblePaymentForm(root);
+    const isExpense = matchesExpenseFormPath(pathname);
+    const isPurchase = matchesPurchaseBillShowPath(pathname) || /\/fis-faturalar(?:\/|$)/.test(pathname) && (hasRecordId || hasPurchaseBillShow || hasPaymentForm);
+    return {
+      href: location.href,
+      pathname,
+      currentPathname: getWindowPathname(window),
+      topPathname: getWindowPathname(window.top),
+      iframePathnames: getTrinityIframePathnames(),
+      activeDocumentPathname: getWindowPathname(root.defaultView),
+      hasRecordId,
+      hasPurchaseBillShow,
+      hasPaymentForm,
+      isExpense,
+      isPurchase,
+      flow: isExpense ? "expense" : isPurchase ? "payment" : "idle"
+    };
+  }
+  function isExpenseFormPage() {
+    return getPageDetectionSnapshot().isExpense;
   }
   function isPurchaseBillShowPage(root = getActiveAppDocument()) {
-    const pathname = getAppPathname();
-    return /\/fis-faturalar\/\d+(?:\/.*)?\/?$/.test(pathname) || /\/fis-faturalar(?:\/|$)/.test(pathname) && (Boolean($("input[data-tid='record-id'][data-ttype='page']", root)) || Boolean($("[data-tns='purchase-bills-show']", root)) || hasVisiblePaymentForm(root));
+    return getPageDetectionSnapshot(root).isPurchase;
   }
 
   // src/parasut/supplier.js
@@ -551,19 +583,8 @@
       return true;
     }
   }
-  function hasPanelInTrinityIframe() {
-    return $$("iframe[name='trinity-iframe'], iframe[data-type='trinity']").some(
-      (iframe) => {
-        try {
-          return Boolean(iframe.contentDocument?.querySelector(`#${PANEL_ID}`));
-        } catch {
-          return false;
-        }
-      }
-    );
-  }
   function shouldRunInThisFrame() {
-    return isIframe() || !hasPanelInTrinityIframe();
+    return !isIframe();
   }
   function removeDuplicatePanels() {
     $$(`#${PANEL_ID}`).forEach((panel, index) => {
@@ -921,15 +942,35 @@
 
   // src/panel/controller.js
   var isFilling = false;
+  var lastDecisionLogKey = "";
+  function appendDebugLog(event, details = {}) {
+    const entry = {
+      ts: (/* @__PURE__ */ new Date()).toISOString(),
+      event,
+      href: location.href,
+      hasPanel: Boolean($(`#${PANEL_ID}`)),
+      ...details
+    };
+    console.info("[AJANS][debug]", entry);
+    try {
+      const key = "ajans-gider-debug-log-v1";
+      const current = JSON.parse(localStorage.getItem(key) || "[]");
+      const next = [...current, entry].slice(-80);
+      localStorage.setItem(key, JSON.stringify(next));
+      window.__AJANS_GIDER_LAST_DEBUG__ = entry;
+      window.__AJANS_GIDER_DEBUG_LOG__ = next;
+      window.ajansGiderDebug = () => JSON.parse(localStorage.getItem(key) || "[]");
+    } catch (err) {
+      console.warn("[AJANS][debug] Log kaydedilemedi:", err);
+    }
+  }
   function getRowsFromTextarea() {
     const textarea = $("#ajans-gider-textarea");
     if (!textarea) return [];
     return parseTable(textarea.value);
   }
   function getCurrentFlow() {
-    if (isExpenseFormPage()) return "expense";
-    if (isPurchaseBillShowPage()) return "payment";
-    return "idle";
+    return getPageDetectionSnapshot().flow;
   }
   function updateFlowVisibility(flow = getCurrentFlow()) {
     const paymentSection = $("#ajans-gider-payment-section");
@@ -1150,14 +1191,41 @@
     document.body.appendChild(panel);
     registerPanelEvents(panel);
     console.log("[AJANS] Gider paneli eklendi:", location.href);
+    appendDebugLog("panel-injected", {
+      snapshot: getPageDetectionSnapshot()
+    });
   }
-  function removePanel() {
-    document.querySelectorAll(`#${PANEL_ID}`).forEach((panel) => panel.remove());
+  function removePanel(reason = "unknown", snapshot = getPageDetectionSnapshot()) {
+    const panels = document.querySelectorAll(`#${PANEL_ID}`);
+    if (panels.length) {
+      appendDebugLog("panel-remove-requested", {
+        reason,
+        panelCount: panels.length,
+        snapshot
+      });
+    }
+    panels.forEach((panel) => panel.remove());
   }
-  function ensurePanelForCurrentPage() {
-    const flow = getCurrentFlow();
+  function ensurePanelForCurrentPage(reason = "refresh") {
+    const snapshot = getPageDetectionSnapshot();
+    const flow = snapshot.flow;
+    const decisionLogKey = [
+      reason,
+      flow,
+      snapshot.pathname,
+      snapshot.activeDocumentPathname,
+      Boolean($(`#${PANEL_ID}`))
+    ].join("|");
+    if (decisionLogKey !== lastDecisionLogKey) {
+      appendDebugLog("panel-decision", {
+        reason,
+        flow,
+        snapshot
+      });
+      lastDecisionLogKey = decisionLogKey;
+    }
     if (flow === "idle") {
-      removePanel();
+      removePanel("idle-flow", snapshot);
       return flow;
     }
     injectPanel();
@@ -1187,36 +1255,41 @@
   } else {
     window.__AJANS_GIDER_SCRIPT_LOADED__ = true;
     removeDuplicatePanels();
-    const refreshPanel = () => {
+    const refreshPanel = (reason = "refresh") => {
       if (!shouldRunInThisFrame()) {
-        removePanel();
+        removePanel("wrong-frame");
         return;
       }
-      ensurePanelForCurrentPage();
+      ensurePanelForCurrentPage(reason);
     };
-    const scheduleRefreshPanel = () => {
-      window.setTimeout(refreshPanel, 0);
-      window.setTimeout(refreshPanel, 300);
-      window.setTimeout(refreshPanel, 1e3);
+    const scheduleRefreshPanel = (reason = "scheduled") => {
+      window.setTimeout(() => refreshPanel(`${reason}:0ms`), 0);
+      window.setTimeout(() => refreshPanel(`${reason}:300ms`), 300);
+      window.setTimeout(() => refreshPanel(`${reason}:1000ms`), 1e3);
     };
     const patchHistoryMethod = (methodName) => {
       const original = window.history[methodName];
       if (typeof original !== "function") return;
       window.history[methodName] = function patchedHistoryMethod(...args) {
         const result = original.apply(this, args);
-        window.dispatchEvent(new Event(ROUTE_REFRESH_EVENT));
+        window.dispatchEvent(new CustomEvent(ROUTE_REFRESH_EVENT, {
+          detail: { methodName }
+        }));
         return result;
       };
     };
     const watchSpaNavigation = () => {
       patchHistoryMethod("pushState");
       patchHistoryMethod("replaceState");
-      window.addEventListener("popstate", scheduleRefreshPanel);
-      window.addEventListener("hashchange", scheduleRefreshPanel);
-      window.addEventListener(ROUTE_REFRESH_EVENT, scheduleRefreshPanel);
+      window.addEventListener("popstate", () => scheduleRefreshPanel("popstate"));
+      window.addEventListener("hashchange", () => scheduleRefreshPanel("hashchange"));
+      window.addEventListener(
+        ROUTE_REFRESH_EVENT,
+        (event) => scheduleRefreshPanel(`history:${event.detail?.methodName || "unknown"}`)
+      );
       const observer = new MutationObserver(() => {
         if (!document.body || document.querySelector("#ajans-gider-panel")) return;
-        scheduleRefreshPanel();
+        scheduleRefreshPanel("panel-missing-after-dom-mutation");
       });
       observer.observe(document.documentElement, {
         childList: true,
@@ -1225,10 +1298,10 @@
     };
     const boot = () => {
       console.log("[AJANS] Script \xE7al\u0131\u015Ft\u0131:", location.href);
-      refreshPanel();
+      refreshPanel("boot");
       watchSpaNavigation();
       window.addEventListener("resize", keepPanelInViewport);
-      window.setInterval(refreshPanel, 1500);
+      window.setInterval(() => refreshPanel("interval"), 1500);
     };
     if (document.readyState === "loading") {
       document.addEventListener("DOMContentLoaded", boot);

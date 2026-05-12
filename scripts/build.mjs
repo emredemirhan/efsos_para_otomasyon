@@ -12,6 +12,7 @@ const banner = `// ==UserScript==
 // @updateURL    https://raw.githubusercontent.com/emredemirhan/efsos_para_otomasyon/main/dist/parasut.user.js
 // @downloadURL  https://raw.githubusercontent.com/emredemirhan/efsos_para_otomasyon/main/dist/parasut.user.js
 // @run-at       document-idle
+// @noframes
 // @grant        none
 // ==/UserScript==`;
 

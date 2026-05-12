@@ -5,7 +5,7 @@ import { parseTable } from "../core/tableParser.js";
 import { fillExpense } from "../parasut/expenseFlow.js";
 import { $ } from "../parasut/dom.js";
 import { removeDuplicatePanels } from "../parasut/frame.js";
-import { isExpenseFormPage, isPurchaseBillShowPage } from "../parasut/pageDetection.js";
+import { getPageDetectionSnapshot } from "../parasut/pageDetection.js";
 import { fillPayment } from "../parasut/paymentFlow.js";
 import { makePanelDraggable } from "./drag.js";
 import {
@@ -26,6 +26,31 @@ import {
 } from "./storage.js";
 
 let isFilling = false;
+let lastDecisionLogKey = "";
+
+function appendDebugLog(event, details = {}) {
+  const entry = {
+    ts: new Date().toISOString(),
+    event,
+    href: location.href,
+    hasPanel: Boolean($(`#${PANEL_ID}`)),
+    ...details,
+  };
+
+  console.info("[AJANS][debug]", entry);
+
+  try {
+    const key = "ajans-gider-debug-log-v1";
+    const current = JSON.parse(localStorage.getItem(key) || "[]");
+    const next = [...current, entry].slice(-80);
+    localStorage.setItem(key, JSON.stringify(next));
+    window.__AJANS_GIDER_LAST_DEBUG__ = entry;
+    window.__AJANS_GIDER_DEBUG_LOG__ = next;
+    window.ajansGiderDebug = () => JSON.parse(localStorage.getItem(key) || "[]");
+  } catch (err) {
+    console.warn("[AJANS][debug] Log kaydedilemedi:", err);
+  }
+}
 
 function getRowsFromTextarea() {
   const textarea = $("#ajans-gider-textarea");
@@ -35,9 +60,7 @@ function getRowsFromTextarea() {
 }
 
 function getCurrentFlow() {
-  if (isExpenseFormPage()) return "expense";
-  if (isPurchaseBillShowPage()) return "payment";
-  return "idle";
+  return getPageDetectionSnapshot().flow;
 }
 
 function updateFlowVisibility(flow = getCurrentFlow()) {
@@ -340,17 +363,47 @@ export function injectPanel() {
   registerPanelEvents(panel);
 
   console.log("[AJANS] Gider paneli eklendi:", location.href);
+  appendDebugLog("panel-injected", {
+    snapshot: getPageDetectionSnapshot(),
+  });
 }
 
-export function removePanel() {
-  document.querySelectorAll(`#${PANEL_ID}`).forEach((panel) => panel.remove());
+export function removePanel(reason = "unknown", snapshot = getPageDetectionSnapshot()) {
+  const panels = document.querySelectorAll(`#${PANEL_ID}`);
+
+  if (panels.length) {
+    appendDebugLog("panel-remove-requested", {
+      reason,
+      panelCount: panels.length,
+      snapshot,
+    });
+  }
+
+  panels.forEach((panel) => panel.remove());
 }
 
-export function ensurePanelForCurrentPage() {
-  const flow = getCurrentFlow();
+export function ensurePanelForCurrentPage(reason = "refresh") {
+  const snapshot = getPageDetectionSnapshot();
+  const flow = snapshot.flow;
+  const decisionLogKey = [
+    reason,
+    flow,
+    snapshot.pathname,
+    snapshot.activeDocumentPathname,
+    Boolean($(`#${PANEL_ID}`)),
+  ].join("|");
+
+  if (decisionLogKey !== lastDecisionLogKey) {
+    appendDebugLog("panel-decision", {
+      reason,
+      flow,
+      snapshot,
+    });
+    lastDecisionLogKey = decisionLogKey;
+  }
 
   if (flow === "idle") {
-    removePanel();
+    removePanel("idle-flow", snapshot);
     return flow;
   }
 

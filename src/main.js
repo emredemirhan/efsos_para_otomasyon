@@ -16,19 +16,19 @@ if (!shouldRunInThisFrame()) {
   window.__AJANS_GIDER_SCRIPT_LOADED__ = true;
   removeDuplicatePanels();
 
-  const refreshPanel = () => {
+  const refreshPanel = (reason = "refresh") => {
     if (!shouldRunInThisFrame()) {
-      removePanel();
+      removePanel("wrong-frame");
       return;
     }
 
-    ensurePanelForCurrentPage();
+    ensurePanelForCurrentPage(reason);
   };
 
-  const scheduleRefreshPanel = () => {
-    window.setTimeout(refreshPanel, 0);
-    window.setTimeout(refreshPanel, 300);
-    window.setTimeout(refreshPanel, 1000);
+  const scheduleRefreshPanel = (reason = "scheduled") => {
+    window.setTimeout(() => refreshPanel(`${reason}:0ms`), 0);
+    window.setTimeout(() => refreshPanel(`${reason}:300ms`), 300);
+    window.setTimeout(() => refreshPanel(`${reason}:1000ms`), 1000);
   };
 
   const patchHistoryMethod = (methodName) => {
@@ -37,7 +37,9 @@ if (!shouldRunInThisFrame()) {
 
     window.history[methodName] = function patchedHistoryMethod(...args) {
       const result = original.apply(this, args);
-      window.dispatchEvent(new Event(ROUTE_REFRESH_EVENT));
+      window.dispatchEvent(new CustomEvent(ROUTE_REFRESH_EVENT, {
+        detail: { methodName },
+      }));
       return result;
     };
   };
@@ -46,13 +48,15 @@ if (!shouldRunInThisFrame()) {
     patchHistoryMethod("pushState");
     patchHistoryMethod("replaceState");
 
-    window.addEventListener("popstate", scheduleRefreshPanel);
-    window.addEventListener("hashchange", scheduleRefreshPanel);
-    window.addEventListener(ROUTE_REFRESH_EVENT, scheduleRefreshPanel);
+    window.addEventListener("popstate", () => scheduleRefreshPanel("popstate"));
+    window.addEventListener("hashchange", () => scheduleRefreshPanel("hashchange"));
+    window.addEventListener(ROUTE_REFRESH_EVENT, (event) =>
+      scheduleRefreshPanel(`history:${event.detail?.methodName || "unknown"}`),
+    );
 
     const observer = new MutationObserver(() => {
       if (!document.body || document.querySelector("#ajans-gider-panel")) return;
-      scheduleRefreshPanel();
+      scheduleRefreshPanel("panel-missing-after-dom-mutation");
     });
 
     observer.observe(document.documentElement, {
@@ -64,11 +68,11 @@ if (!shouldRunInThisFrame()) {
   const boot = () => {
     console.log("[AJANS] Script çalıştı:", location.href);
 
-    refreshPanel();
+    refreshPanel("boot");
     watchSpaNavigation();
 
     window.addEventListener("resize", keepPanelInViewport);
-    window.setInterval(refreshPanel, 1500);
+    window.setInterval(() => refreshPanel("interval"), 1500);
   };
 
   if (document.readyState === "loading") {
