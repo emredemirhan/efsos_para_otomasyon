@@ -9,6 +9,16 @@ import {
 } from "./dom.js";
 import { findSectionByHeadings } from "./fields.js";
 
+const DROPDOWN_SEARCH_MIN_WAIT_MS = 1100;
+
+function getOptionTitle(el) {
+  return (
+    el.querySelector("[title]")?.getAttribute("title") ||
+    el.getAttribute("title") ||
+    elementText(el)
+  );
+}
+
 export async function selectFromDropdown(sectionNames, value, type) {
   if (!value) return;
 
@@ -44,40 +54,36 @@ export async function selectFromDropdown(sectionNames, value, type) {
   }, 4000).catch(() => null);
 
   if (searchInput) {
-    setNativeValue(searchInput, value);
-    await sleep(800);
+    setNativeValue(searchInput, value, { blur: false });
+    await sleep(DROPDOWN_SEARCH_MIN_WAIT_MS);
   }
 
-  const candidates = [];
+  const wanted = norm(value);
 
-  for (const root of getVisibleDropdownRoots()) {
-    candidates.push(
-      ...$$(
-        "[data-tid='select-category'], [data-tid='toggleTag'], .ember-power-select-option, li a, a, button",
-        root,
-      ).filter(isVisible),
+  const selected = await waitFor(() => {
+    const candidates = [];
+
+    for (const root of getVisibleDropdownRoots()) {
+      candidates.push(
+        ...$$(
+          "[data-tid='select-category'], [data-tid='toggleTag'], .ember-power-select-option, li a, a, button",
+          root,
+        ).filter(isVisible),
+      );
+    }
+
+    if (!candidates.length) return null;
+
+    const exact = candidates.find((el) => norm(getOptionTitle(el)) === wanted);
+    if (exact) return exact;
+
+    const partial = candidates.find((el) =>
+      norm(getOptionTitle(el)).includes(wanted),
     );
-  }
+    if (partial) return partial;
 
-  const exact = candidates.find((el) => {
-    const title =
-      el.querySelector("[title]")?.getAttribute("title") ||
-      el.getAttribute("title") ||
-      elementText(el);
-
-    return norm(title) === norm(value);
-  });
-
-  const partial = candidates.find((el) => {
-    const title =
-      el.querySelector("[title]")?.getAttribute("title") ||
-      el.getAttribute("title") ||
-      elementText(el);
-
-    return norm(title).includes(norm(value));
-  });
-
-  const selected = exact || partial;
+    return null;
+  }, 3500).catch(() => null);
 
   if (!selected) {
     throw new Error(`${type} bulunamadı: ${value}`);

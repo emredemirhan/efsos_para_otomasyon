@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Parasut Gider Formu Excel Doldurucu
 // @namespace    ajans-parasut
-// @version      1.2.14
+// @version      1.2.15
 // @description  Excel satırlarından seçilen kaydı Paraşüt gider formuna manuel doldurur
 // @match        https://uygulama.parasut.com/*
 // @exclude      https://uygulama.parasut.com/*render_trinity_iframe=true*
@@ -16,7 +16,6 @@
   var PANEL_ID = "ajans-gider-panel";
   var STORAGE_TEXT_KEY = "ajans-gider-text-v1";
   var STORAGE_INDEX_KEY = "ajans-gider-selected-index-v1";
-  var STORAGE_PAYMENT_INDEX_KEY = "ajans-gider-selected-payment-index-v1";
   var STORAGE_POS_KEY = "ajans-gider-panel-pos-v1";
   var STORAGE_MIN_KEY = "ajans-gider-panel-minimized-v1";
 
@@ -78,34 +77,6 @@
     return d;
   }
 
-  // src/core/paymentParser.js
-  function parsePaymentItems(row) {
-    const lines = String(row?.title || "").replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n").map((line) => line.replace(/\s+/g, " ").trim()).filter(Boolean);
-    const amountAtEndPattern = /^(.*?)\s*[-–—]\s*([\d.,]+)\s*(?:TL|TRY|₺)?\s*$/i;
-    const items = lines.map((line) => {
-      const match = line.match(amountAtEndPattern);
-      if (!match) return null;
-      return {
-        description: match[1].trim(),
-        amount: parseAmount(match[2]),
-        raw: line
-      };
-    }).filter((item) => item && item.amount > 0);
-    if (items.length) return items;
-    const fallbackAmount = parseAmount(row?.amount);
-    if (!fallbackAmount) return [];
-    return [
-      {
-        description: String(row?.title || row?.brand || "\xD6deme").trim(),
-        amount: fallbackAmount,
-        raw: String(row?.title || "").trim()
-      }
-    ];
-  }
-  function paymentItemsTotal(items) {
-    return items.reduce((sum, item) => sum + parseAmount(item.amount), 0);
-  }
-
   // src/core/text.js
   function norm(value) {
     return String(value || "").toLocaleUpperCase("tr-TR").replace(/\s+/g, " ").trim();
@@ -125,6 +96,14 @@
       }
     }
     return "";
+  }
+  function inferBrandFromTitle(title) {
+    const firstToken = String(title || "").trim().split(/\s+/)[0]?.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, "");
+    if (!firstToken) return "";
+    const upper = firstToken.toLocaleUpperCase("tr-TR");
+    const hasLetter = /\p{L}/u.test(firstToken);
+    if (!hasLetter || firstToken !== upper) return "";
+    return firstToken;
   }
   function parseDelimitedText(text) {
     const rows = [];
@@ -173,6 +152,9 @@
         "toplam_tutar",
         "toplam",
         "tutar",
+        "kalem_tutari",
+        "gider_tutari",
+        "ana_gider_tutari",
         "kisi",
         "tedarikci",
         "kayit_ismi",
@@ -187,7 +169,10 @@
         "etiket"
       ].includes(key)
     );
-    const headers = hasHeader ? rows.shift().map(keyify) : [
+    const usesFourColumnExpenseFormat = !hasHeader && rows[0]?.length === 4;
+    const usesFiveColumnExpenseFormat = !hasHeader && rows[0]?.length === 5;
+    const usesShortBrandInference = usesFourColumnExpenseFormat || usesFiveColumnExpenseFormat;
+    const headers = hasHeader ? rows.shift().map(keyify) : usesFourColumnExpenseFormat ? ["kisi", "marka", "kalem_tutari", "kayit_ismi"] : usesFiveColumnExpenseFormat ? ["kisi", "marka", "grup_toplam", "kalem_tutari", "kayit_ismi"] : [
       "toplam_tutar",
       "kisi",
       "kayit_ismi",
@@ -201,7 +186,15 @@
       headers.forEach((h, i) => {
         raw[h] = cols[i] || "";
       });
-      const amount = pick(raw, ["toplam_tutar", "toplam", "tutar", "amount"]);
+      const amount = pick(raw, [
+        "kalem_tutari",
+        "gider_tutari",
+        "ana_gider_tutari",
+        "tutar",
+        "toplam_tutar",
+        "toplam",
+        "amount"
+      ]);
       const supplier = pick(raw, ["kisi", "tedarikci", "tedarikci_adi"]);
       const title = pick(raw, [
         "kayit_ismi",
@@ -212,7 +205,9 @@
         "is_adi",
         "proje"
       ]);
-      const brand = pick(raw, ["marka", "kategori", "gider_kategorisi"]);
+      const rawBrand = pick(raw, ["marka", "kategori", "gider_kategorisi"]);
+      const inferredBrand = usesShortBrandInference ? inferBrandFromTitle(title) : "";
+      const brand = inferredBrand || rawBrand;
       const tag = pick(raw, ["etiket", "tag"]);
       const issueDateRaw = pick(raw, [
         "fis_fatura_tarihi",
@@ -225,6 +220,7 @@
         supplier,
         title,
         brand,
+        rawBrand,
         tag,
         issueDate: parseDate(issueDateRaw) || /* @__PURE__ */ new Date(),
         dueDate: parseDate(dueDateRaw) || nextPaymentDate()
@@ -316,17 +312,6 @@
     ).filter(isVisible);
     return roots.length ? roots : [root];
   }
-  function findVisibleActionByText(text, options = {}) {
-    const wanted = norm(text);
-    const selector = options.selector || "button, a";
-    const root = options.root || getActiveAppDocument();
-    return $$(selector, root).filter(isVisible).find((el) => {
-      if (options.excludeSave && el.getAttribute("data-tid") === "save") {
-        return false;
-      }
-      return norm(elementText(el)) === wanted;
-    });
-  }
 
   // src/parasut/fields.js
   function findInputByLabels(labelTexts, root = getActiveAppDocument()) {
@@ -386,6 +371,10 @@
   }
 
   // src/parasut/dropdowns.js
+  var DROPDOWN_SEARCH_MIN_WAIT_MS = 1100;
+  function getOptionTitle(el) {
+    return el.querySelector("[title]")?.getAttribute("title") || el.getAttribute("title") || elementText(el);
+  }
   async function selectFromDropdown(sectionNames, value, type) {
     if (!value) return;
     const labels = Array.isArray(sectionNames) ? sectionNames : [sectionNames];
@@ -411,27 +400,29 @@
       return null;
     }, 4e3).catch(() => null);
     if (searchInput) {
-      setNativeValue(searchInput, value);
-      await sleep(800);
+      setNativeValue(searchInput, value, { blur: false });
+      await sleep(DROPDOWN_SEARCH_MIN_WAIT_MS);
     }
-    const candidates = [];
-    for (const root of getVisibleDropdownRoots()) {
-      candidates.push(
-        ...$$(
-          "[data-tid='select-category'], [data-tid='toggleTag'], .ember-power-select-option, li a, a, button",
-          root
-        ).filter(isVisible)
+    const wanted = norm(value);
+    const selected = await waitFor(() => {
+      const candidates = [];
+      for (const root of getVisibleDropdownRoots()) {
+        candidates.push(
+          ...$$(
+            "[data-tid='select-category'], [data-tid='toggleTag'], .ember-power-select-option, li a, a, button",
+            root
+          ).filter(isVisible)
+        );
+      }
+      if (!candidates.length) return null;
+      const exact = candidates.find((el) => norm(getOptionTitle(el)) === wanted);
+      if (exact) return exact;
+      const partial = candidates.find(
+        (el) => norm(getOptionTitle(el)).includes(wanted)
       );
-    }
-    const exact = candidates.find((el) => {
-      const title = el.querySelector("[title]")?.getAttribute("title") || el.getAttribute("title") || elementText(el);
-      return norm(title) === norm(value);
-    });
-    const partial = candidates.find((el) => {
-      const title = el.querySelector("[title]")?.getAttribute("title") || el.getAttribute("title") || elementText(el);
-      return norm(title).includes(norm(value));
-    });
-    const selected = exact || partial;
+      if (partial) return partial;
+      return null;
+    }, 3500).catch(() => null);
     if (!selected) {
       throw new Error(`${type} bulunamad\u0131: ${value}`);
     }
@@ -447,6 +438,200 @@
   }
   async function selectTag(name) {
     await selectFromDropdown(["ET\u0130KETLER", "ET\u0130KET"], name, "Etiket");
+  }
+
+  // src/parasut/datepicker.js
+  var DUE_DATE_SHORTCUT_HINTS = [
+    "B\u0130L\u0130NM\u0130YOR",
+    "AY BA\u015EINDA",
+    "1 HAFTA SONRA",
+    "2 HAFTA SONRA",
+    "1 AY SONRA",
+    "2 AY SONRA"
+  ];
+  function hasDueDateShortcuts(container) {
+    const buttons = $$("button", container);
+    if (!buttons.length) return false;
+    const texts = buttons.map((btn) => norm(elementText(btn)));
+    return DUE_DATE_SHORTCUT_HINTS.some(
+      (hint) => texts.some((text) => text.includes(hint))
+    );
+  }
+  function findDatePickerNearLabel(label) {
+    let node = label;
+    for (let i = 0; i < 12 && node; i++) {
+      if (node.querySelector) {
+        const pickers = $$('[class*="__p-date-picker__"]', node).filter(isVisible);
+        if (pickers.length === 1) return pickers[0];
+        if (pickers.length > 1) {
+          const withShortcuts = pickers.find(hasDueDateShortcuts);
+          return withShortcuts || pickers[0];
+        }
+      }
+      node = node.parentElement;
+    }
+    node = label;
+    for (let i = 0; i < 12 && node; i++) {
+      if (node.querySelector) {
+        const calendars = $$(".calendar-container", node).filter(isVisible);
+        if (calendars.length) {
+          const target = calendars.find(hasDueDateShortcuts) || calendars[0];
+          return target.closest('[class*="__p-date-picker__"]') || target;
+        }
+      }
+      node = node.parentElement;
+    }
+    return null;
+  }
+  function searchLabelsByTags(tagSelector, wantedLabels, root) {
+    const elements = $$(tagSelector, root);
+    return wantedLabels.flatMap(
+      (wanted) => elements.filter((el) => norm(elementText(el)).includes(wanted))
+    );
+  }
+  function findCalendarByLabels(labelTexts, root = getActiveAppDocument()) {
+    const wantedLabels = labelTexts.map(norm);
+    for (const selector of ["label", "h4, h3, strong, legend"]) {
+      const matches = searchLabelsByTags(selector, wantedLabels, root);
+      matches.sort((a, b) => Number(isVisible(b)) - Number(isVisible(a)));
+      for (const label of matches) {
+        const picker = findDatePickerNearLabel(label);
+        if (picker) return picker;
+      }
+    }
+    const visiblePickers = $$('[class*="__p-date-picker__"]', root).filter(isVisible);
+    const dueDateInline = visiblePickers.find(hasDueDateShortcuts);
+    if (dueDateInline) return dueDateInline;
+    return null;
+  }
+  function findVisibleInput(picker) {
+    if (!picker) return null;
+    return $$("input", picker).find(
+      (el) => (el.type === "text" || !el.type) && isVisible(el)
+    ) || null;
+  }
+  function findInlinePikaSingle(picker) {
+    if (!picker) return null;
+    const all = $$(".pika-single", picker);
+    return all.find((el) => !el.classList.contains("is-bound") && isVisible(el)) || all.find((el) => !el.classList.contains("is-bound")) || null;
+  }
+  function findVisibleBoundPikaSingle(doc) {
+    const scope = doc?.body || doc || getActiveAppDocument();
+    const all = $$(".pika-single.is-bound", scope);
+    return all.find((el) => !el.classList.contains("is-hidden") && isVisible(el)) || null;
+  }
+  function setSelectValue(select, value) {
+    if (!select) return false;
+    if (Number(select.value) === Number(value)) return false;
+    const view = select.ownerDocument?.defaultView || window;
+    const setter = Object.getOwnPropertyDescriptor(
+      view.HTMLSelectElement.prototype,
+      "value"
+    )?.set;
+    if (setter) setter.call(select, String(value));
+    else select.value = String(value);
+    select.dispatchEvent(new view.Event("change", { bubbles: true }));
+    return true;
+  }
+  async function setPikadayDate(pikaSingle, date) {
+    if (!pikaSingle) return false;
+    const targetYear = date.getFullYear();
+    const targetMonth = date.getMonth();
+    const targetDay = date.getDate();
+    const yearSelect = pikaSingle.querySelector("select.pika-select-year");
+    const monthSelect = pikaSingle.querySelector("select.pika-select-month");
+    const yearChanged = setSelectValue(yearSelect, targetYear);
+    const monthChanged = setSelectValue(monthSelect, targetMonth);
+    if (yearChanged || monthChanged) await sleep(350);
+    const selector = `button.pika-day[data-pika-year='${targetYear}'][data-pika-month='${targetMonth}'][data-pika-day='${targetDay}']`;
+    const dayButton = await waitFor(
+      () => pikaSingle.querySelector(selector),
+      2500
+    ).catch(() => null);
+    if (!dayButton) {
+      console.warn(
+        "[AJANS] Pikaday g\xFCn butonu bulunamad\u0131:",
+        formatDateTR(date),
+        "container:",
+        pikaSingle
+      );
+      return false;
+    }
+    dayButton.click();
+    await sleep(250);
+    return true;
+  }
+  async function openBoundPikaday(input) {
+    if (!input) return null;
+    const view = input.ownerDocument?.defaultView || window;
+    const doc = input.ownerDocument || document;
+    try {
+      input.focus();
+    } catch {
+    }
+    input.dispatchEvent(new view.MouseEvent("mousedown", { bubbles: true }));
+    input.dispatchEvent(new view.MouseEvent("mouseup", { bubbles: true }));
+    try {
+      input.click();
+    } catch {
+    }
+    return waitFor(() => findVisibleBoundPikaSingle(doc), 2500).catch(() => null);
+  }
+  async function closeBoundPikaday(input) {
+    if (!input) return;
+    try {
+      input.blur();
+    } catch {
+    }
+    const doc = input.ownerDocument || document;
+    const view = doc.defaultView || window;
+    doc.body?.dispatchEvent(
+      new view.MouseEvent("mousedown", { bubbles: true })
+    );
+    await sleep(150);
+  }
+  async function setDateFieldByLabels(labelTexts, date) {
+    if (!date) return false;
+    const root = getActiveAppDocument();
+    const picker = await waitFor(
+      () => findCalendarByLabels(labelTexts, root),
+      3500
+    ).catch(() => null);
+    if (!picker) {
+      console.warn(
+        "[AJANS] Tarih alan\u0131 bulunamad\u0131. Aranan label'lar:",
+        labelTexts
+      );
+      return false;
+    }
+    const inline = findInlinePikaSingle(picker);
+    if (inline) {
+      if (await setPikadayDate(inline, date)) return true;
+    }
+    const input = findVisibleInput(picker);
+    if (input) {
+      const bound = await openBoundPikaday(input);
+      if (bound) {
+        const ok = await setPikadayDate(bound, date);
+        await closeBoundPikaday(input);
+        if (ok) return true;
+      }
+    }
+    const hiddenInput = picker.querySelector("input.ember-pikaday-input");
+    if (hiddenInput) {
+      console.info(
+        "[AJANS] Pikaday popup a\xE7\u0131lamad\u0131, hidden input fallback denenecek."
+      );
+      setNativeValue(hiddenInput, formatDateTR(date));
+      return true;
+    }
+    console.warn(
+      "[AJANS] Tarih takvimi doldurulamad\u0131:",
+      formatDateTR(date),
+      "label:",
+      labelTexts
+    );
+    return false;
   }
 
   // src/parasut/pageDetection.js
@@ -468,14 +653,8 @@
       (pathname) => /\/fis-faturalar(?:\/|$)/.test(pathname)
     ) || iframePathnames[0] || topPathname || currentPathname || location.pathname;
   }
-  function hasVisiblePaymentForm(root) {
-    return $$("[data-tns='add-payment']", root).some(isVisible);
-  }
   function matchesExpenseFormPath(pathname) {
     return /\/fis-faturalar\/yeni(?:\/hizli)?\/?$/.test(pathname);
-  }
-  function matchesPurchaseBillShowPath(pathname) {
-    return /\/fis-faturalar\/\d+(?:\/.*)?\/?$/.test(pathname);
   }
   function getPageDetectionSnapshot(root = getActiveAppDocument()) {
     const pathname = getAppPathname();
@@ -483,9 +662,7 @@
       $("input[data-tid='record-id'][data-ttype='page']", root)
     );
     const hasPurchaseBillShow = Boolean($("[data-tns='purchase-bills-show']", root));
-    const hasPaymentForm = hasVisiblePaymentForm(root);
     const isExpense = matchesExpenseFormPath(pathname);
-    const isPurchase = matchesPurchaseBillShowPath(pathname) || /\/fis-faturalar(?:\/|$)/.test(pathname) && (hasRecordId || hasPurchaseBillShow || hasPaymentForm);
     return {
       href: location.href,
       pathname,
@@ -495,31 +672,33 @@
       activeDocumentPathname: getWindowPathname(root.defaultView),
       hasRecordId,
       hasPurchaseBillShow,
-      hasPaymentForm,
       isExpense,
-      isPurchase,
-      flow: isExpense ? "expense" : isPurchase ? "payment" : "idle"
+      flow: isExpense ? "expense" : "idle"
     };
   }
   function isExpenseFormPage() {
     return getPageDetectionSnapshot().isExpense;
   }
-  function isPurchaseBillShowPage(root = getActiveAppDocument()) {
-    return getPageDetectionSnapshot(root).isPurchase;
-  }
 
   // src/parasut/supplier.js
+  var SUPPLIER_SEARCH_MIN_WAIT_MS = 1100;
   async function fillSupplier(name) {
     if (!name) return;
     const input = findInputByLabels(["TEDAR\u0130K\xC7\u0130", "K\u0130\u015E\u0130", "CAR\u0130", "F\u0130RMA"]);
     if (!input) throw new Error("Tedarik\xE7i alan\u0131 bulunamad\u0131.");
     setNativeValue(input, name, { blur: false });
+    await sleep(SUPPLIER_SEARCH_MIN_WAIT_MS);
     const firstOption = await waitFor(() => {
       const options = $$(
         ".ember-power-select-option, .tt-suggestion, [data-test-option], .autocomplete-result, [role='option'], li a",
         input.ownerDocument
       ).filter(isVisible);
-      return options[0] || null;
+      const wanted = norm(name);
+      const exact = options.find((option) => norm(elementText(option)) === wanted);
+      const partial = options.find(
+        (option) => norm(elementText(option)).includes(wanted)
+      );
+      return exact || partial || options[0] || null;
     }, 3500).catch(() => null);
     if (!firstOption) {
       throw new Error(`Tedarik\xE7i se\xE7ene\u011Fi bulunamad\u0131: ${name}`);
@@ -530,12 +709,70 @@
   }
 
   // src/parasut/expenseFlow.js
-  function selectUnpaid() {
+  var ISSUE_DATE_LABELS = [
+    "F\u0130\u015E/FATURA TAR\u0130H\u0130",
+    "FATURA TAR\u0130H\u0130",
+    "F\u0130\u015E TAR\u0130H\u0130",
+    "TAR\u0130H"
+  ];
+  var DUE_DATE_LABELS = ["\xD6DENECE\u011E\u0130 TAR\u0130H", "\xD6DEME TAR\u0130H\u0130", "VADE TAR\u0130H\u0130"];
+  function findUnpaidRadio(root) {
+    const direct = $("input[name='paymentStatus'][value='unpaid']", root);
+    if (direct) return direct;
+    const labels = $$("label", root).filter(
+      (label) => norm(elementText(label)).includes("\xD6DENECEK")
+    );
+    for (const label of labels) {
+      const inner = label.querySelector(
+        "input[type='radio'], input[type='checkbox']"
+      );
+      if (inner) return inner;
+      if (label.htmlFor) {
+        const target = label.ownerDocument.getElementById(label.htmlFor);
+        if (target?.matches?.("input")) return target;
+      }
+      const sibling = label.previousElementSibling?.matches?.("input") ? label.previousElementSibling : label.nextElementSibling?.matches?.("input") ? label.nextElementSibling : null;
+      if (sibling) return sibling;
+      const parentRadio = label.parentElement?.querySelector?.(
+        "input[type='radio']"
+      );
+      if (parentRadio) return parentRadio;
+    }
+    return null;
+  }
+  async function selectUnpaidAndWaitDueDate() {
     const root = getActiveAppDocument();
-    const unpaidRadio = $("input[name='paymentStatus'][value='unpaid']", root) || $$("label", root).find((label) => norm(elementText(label)).includes("\xD6DENECEK"))?.querySelector("input[type='radio']");
-    if (unpaidRadio && !unpaidRadio.checked) {
-      unpaidRadio.click();
-      unpaidRadio.dispatchEvent(new Event("change", { bubbles: true }));
+    const unpaidRadio = findUnpaidRadio(root);
+    if (unpaidRadio) {
+      if (!unpaidRadio.checked) {
+        unpaidRadio.click();
+        unpaidRadio.dispatchEvent(new Event("change", { bubbles: true }));
+        await sleep(300);
+      }
+    } else {
+      console.warn(
+        "[AJANS] '\xD6denecek' radio bulunamad\u0131, \xF6denece\u011Fi tarih alan\u0131 zaten a\xE7\u0131k olabilir."
+      );
+    }
+    return waitFor(() => findCalendarByLabels(DUE_DATE_LABELS), 4e3).catch(
+      () => null
+    );
+  }
+  async function setIssueDate(date) {
+    const ok = await setDateFieldByLabels(ISSUE_DATE_LABELS, date);
+    if (!ok) {
+      throw new Error(
+        `Fi\u015F/Fatura tarihi doldurulamad\u0131: ${formatDateTR(date)}`
+      );
+    }
+  }
+  async function setDueDate(date) {
+    const ok = await setDateFieldByLabels(DUE_DATE_LABELS, date);
+    if (!ok) {
+      console.warn(
+        "[AJANS] \xD6denece\u011Fi tarih takvimi doldurulamad\u0131:",
+        formatDateTR(date)
+      );
     }
   }
   async function fillExpense(row) {
@@ -554,22 +791,15 @@
       "Kay\u0131t ismi"
     );
     await fillSupplier(row.supplier);
-    setRequiredField(
-      ["F\u0130\u015E/FATURA TAR\u0130H\u0130", "FATURA TAR\u0130H\u0130", "F\u0130\u015E TAR\u0130H\u0130", "TAR\u0130H"],
-      formatDateTR(row.issueDate),
-      "Fi\u015F/Fatura tarihi"
-    );
+    await setIssueDate(row.issueDate);
     setRequiredField(
       ["TOPLAM TUTAR", "GENEL TOPLAM", "TUTAR"],
       formatAmountTR(row.amount),
       "Toplam tutar"
     );
     setOptionalField(["TOPLAM KDV", "KDV"], "0,00");
-    selectUnpaid();
-    setOptionalField(
-      ["\xD6DENECE\u011E\u0130 TAR\u0130H", "\xD6DEME TAR\u0130H\u0130", "VADE TAR\u0130H\u0130"],
-      formatDateTR(row.dueDate)
-    );
+    await selectUnpaidAndWaitDueDate();
+    await setDueDate(row.dueDate);
     await selectCategory(row.brand);
     if (row.tag) {
       await selectTag(row.tag);
@@ -602,52 +832,6 @@
     });
   }
 
-  // src/parasut/paymentFlow.js
-  function findPaymentForm() {
-    return $$("[data-tns='add-payment']").find(isVisible) || null;
-  }
-  function findPaymentFieldInput(fieldNames) {
-    const wantedNames = (Array.isArray(fieldNames) ? fieldNames : [fieldNames]).map(
-      norm
-    );
-    const fieldSet = $$(".fieldSet").find((el) => {
-      const label = $(".fieldSet-label", el);
-      const labelText = label?.getAttribute("title") || elementText(label);
-      return wantedNames.some((wanted) => norm(labelText).includes(wanted));
-    });
-    if (!fieldSet) return null;
-    return findFillableInput($(".fieldSet-value", fieldSet) || fieldSet);
-  }
-  async function openPaymentForm() {
-    if (findPaymentForm()) return findPaymentForm();
-    if (!isPurchaseBillShowPage()) {
-      throw new Error(
-        "\xD6deme eklemek i\xE7in olu\u015Fturulan fi\u015F/fatura detay sayfas\u0131nda olmal\u0131s\u0131n."
-      );
-    }
-    const button = findVisibleActionByText("\xD6DEME EKLE", {
-      selector: "button",
-      excludeSave: true
-    });
-    if (!button) throw new Error("\xDCstteki \xD6DEME EKLE butonu bulunamad\u0131.");
-    button.click();
-    return waitFor(() => findPaymentForm(), 5e3);
-  }
-  async function fillPayment(item) {
-    if (!item) throw new Error("\xD6deme kalemi se\xE7ilmedi.");
-    await openPaymentForm();
-    const amountInput = await waitFor(
-      () => findPaymentFieldInput(["MEBLA\u011E", "TUTAR"]),
-      4e3
-    );
-    const descriptionInput = findPaymentFieldInput(["A\xC7IKLAMA"]);
-    setNativeValue(amountInput, formatAmountTR(item.amount));
-    if (descriptionInput) {
-      setNativeValue(descriptionInput, item.description || item.raw || "\xD6deme");
-    }
-    await sleep(300);
-  }
-
   // src/panel/storage.js
   function getSavedPanelPosition() {
     try {
@@ -656,8 +840,8 @@
       return null;
     }
   }
-  function savePanelPosition(panel) {
-    const rect = panel.getBoundingClientRect();
+  function savePanelPosition(panel, position = null) {
+    const rect = position || panel.getBoundingClientRect();
     localStorage.setItem(
       STORAGE_POS_KEY,
       JSON.stringify({
@@ -689,19 +873,8 @@
   function setSelectedIndex(index) {
     localStorage.setItem(STORAGE_INDEX_KEY, String(index));
   }
-  function getSelectedPaymentIndex(itemsLength) {
-    const raw = Number(localStorage.getItem(STORAGE_PAYMENT_INDEX_KEY) || 0);
-    if (!Number.isFinite(raw)) return 0;
-    if (raw < 0) return 0;
-    if (raw >= itemsLength) return Math.max(0, itemsLength - 1);
-    return raw;
-  }
-  function setSelectedPaymentIndex(index) {
-    localStorage.setItem(STORAGE_PAYMENT_INDEX_KEY, String(index));
-  }
   function clearSelectionState() {
     localStorage.removeItem(STORAGE_INDEX_KEY);
-    localStorage.removeItem(STORAGE_PAYMENT_INDEX_KEY);
   }
   function isPanelMinimized() {
     return localStorage.getItem(STORAGE_MIN_KEY) === "1";
@@ -713,10 +886,23 @@
   // src/panel/drag.js
   function makePanelDraggable(panel, handle) {
     let dragging = false;
+    let frameId = 0;
     let startX = 0;
     let startY = 0;
     let startLeft = 0;
     let startTop = 0;
+    let currentLeft = 0;
+    let currentTop = 0;
+    function applyDragTransform() {
+      frameId = 0;
+      const translateX = currentLeft - startLeft;
+      const translateY = currentTop - startTop;
+      panel.style.transform = `translate3d(${translateX}px, ${translateY}px, 0)`;
+    }
+    function scheduleDragTransform() {
+      if (frameId) return;
+      frameId = window.requestAnimationFrame(applyDragTransform);
+    }
     handle.addEventListener("mousedown", (event) => {
       const target = event.target;
       if (target.closest("button") || target.closest("textarea") || target.closest("select") || target.closest("input")) {
@@ -728,206 +914,477 @@
       startY = event.clientY;
       startLeft = rect.left;
       startTop = rect.top;
+      currentLeft = startLeft;
+      currentTop = startTop;
       panel.style.left = `${startLeft}px`;
       panel.style.top = `${startTop}px`;
       panel.style.right = "auto";
       panel.style.bottom = "auto";
+      panel.style.transform = "translate3d(0, 0, 0)";
+      panel.style.willChange = "transform";
       document.body.style.userSelect = "none";
       event.preventDefault();
     });
     window.addEventListener("mousemove", (event) => {
       if (!dragging) return;
-      const nextLeft = startLeft + event.clientX - startX;
-      const nextTop = startTop + event.clientY - startY;
       const maxLeft = window.innerWidth - 80;
       const maxTop = window.innerHeight - 50;
-      panel.style.left = `${Math.max(0, Math.min(nextLeft, maxLeft))}px`;
-      panel.style.top = `${Math.max(0, Math.min(nextTop, maxTop))}px`;
+      currentLeft = Math.max(
+        0,
+        Math.min(startLeft + event.clientX - startX, maxLeft)
+      );
+      currentTop = Math.max(
+        0,
+        Math.min(startTop + event.clientY - startY, maxTop)
+      );
+      scheduleDragTransform();
     });
     window.addEventListener("mouseup", () => {
       if (!dragging) return;
       dragging = false;
+      if (frameId) {
+        window.cancelAnimationFrame(frameId);
+        frameId = 0;
+      }
+      panel.style.transform = "";
+      panel.style.willChange = "";
+      panel.style.left = `${currentLeft}px`;
+      panel.style.top = `${currentTop}px`;
       document.body.style.userSelect = "";
-      savePanelPosition(panel);
+      savePanelPosition(panel, { left: currentLeft, top: currentTop });
     });
   }
 
-  // src/panel/view.js
+  // src/panel/panelTheme.js
+  var PANEL_COLORS = Object.freeze({
+    ACCENT: "#1f6feb",
+    ACCENT_DARK: "#0f4fc1",
+    TEXT: "#111827",
+    MUTED: "#6b7280",
+    BORDER: "#e5e7eb",
+    SOFT_BG: "#f8fafc"
+  });
+
+  // src/panel/panelHover.js
+  var { ACCENT, ACCENT_DARK, TEXT, MUTED, BORDER, SOFT_BG } = PANEL_COLORS;
+  function setupHoverEffects(panel) {
+    const hoverableButtons = panel.querySelectorAll(
+      "#ajans-gider-help-toggle, #ajans-gider-minimize"
+    );
+    hoverableButtons.forEach((button) => {
+      button.addEventListener("mouseenter", () => {
+        button.style.background = "#f3f4f6";
+        button.style.color = TEXT;
+      });
+      button.addEventListener("mouseleave", () => {
+        button.style.background = "transparent";
+        button.style.color = MUTED;
+      });
+    });
+    const stepButtons = panel.querySelectorAll(
+      "#ajans-gider-prev, #ajans-gider-next"
+    );
+    stepButtons.forEach((button) => {
+      button.addEventListener("mouseenter", () => {
+        if (button.disabled) return;
+        button.style.background = SOFT_BG;
+        button.style.borderColor = "#cbd5e1";
+      });
+      button.addEventListener("mouseleave", () => {
+        button.style.background = "#ffffff";
+        button.style.borderColor = BORDER;
+      });
+    });
+    const fillButton = panel.querySelector("#ajans-gider-fill");
+    if (fillButton) {
+      fillButton.addEventListener("mouseenter", () => {
+        if (fillButton.disabled) return;
+        fillButton.style.background = ACCENT_DARK;
+      });
+      fillButton.addEventListener("mouseleave", () => {
+        if (fillButton.disabled) return;
+        fillButton.style.background = ACCENT;
+      });
+    }
+    const editButton = panel.querySelector("#ajans-gider-edit-data");
+    if (editButton) {
+      editButton.addEventListener("mouseenter", () => {
+        editButton.style.color = ACCENT_DARK;
+      });
+      editButton.addEventListener("mouseleave", () => {
+        editButton.style.color = ACCENT;
+      });
+    }
+    const clearButton = panel.querySelector("#ajans-gider-clear");
+    if (clearButton) {
+      clearButton.addEventListener("mouseenter", () => {
+        clearButton.style.color = TEXT;
+      });
+      clearButton.addEventListener("mouseleave", () => {
+        clearButton.style.color = MUTED;
+      });
+    }
+    const select = panel.querySelector("#ajans-gider-row-select");
+    if (select) {
+      select.addEventListener("mouseenter", () => {
+        select.style.borderColor = "#cbd5e1";
+      });
+      select.addEventListener("mouseleave", () => {
+        select.style.borderColor = BORDER;
+      });
+      select.addEventListener("focus", () => {
+        select.style.borderColor = ACCENT;
+      });
+      select.addEventListener("blur", () => {
+        select.style.borderColor = BORDER;
+      });
+    }
+  }
+
+  // src/panel/panelTemplate.js
+  var { ACCENT: ACCENT2, TEXT: TEXT2, MUTED: MUTED2, BORDER: BORDER2, SOFT_BG: SOFT_BG2 } = PANEL_COLORS;
   function createPanelElement() {
     const panel = document.createElement("div");
     panel.id = PANEL_ID;
-    const savedPos = getSafePanelPosition();
-    panel.style.cssText = `
-      position: fixed;
-      ${savedPos ? `left:${savedPos.left}px; top:${savedPos.top}px;` : "right:24px; top:110px;"}
-      width: 480px;
-      z-index: 2147483647;
-      background: white;
-      border: 3px solid #1f6feb;
-      border-radius: 12px;
-      padding: 0;
-      box-shadow: 0 20px 60px rgba(0,0,0,.35);
-      font-family: Arial, sans-serif;
-      color: #111;
-      overflow: hidden;
-    `;
-    panel.innerHTML = `
-      <div id="ajans-gider-drag-handle" style="
+    panel.style.cssText = getPanelShellStyle(getSafePanelPosition());
+    panel.innerHTML = getPanelMarkup();
+    setupHoverEffects(panel);
+    return panel;
+  }
+  function getPanelShellStyle(savedPos) {
+    return `
+    position: fixed;
+    ${savedPos ? `left:${savedPos.left}px; top:${savedPos.top}px;` : "right:24px; top:110px;"}
+    width: 360px;
+    z-index: 2147483647;
+    background: #ffffff;
+    border: 1px solid ${BORDER2};
+    border-radius: 14px;
+    padding: 0;
+    box-shadow: 0 18px 50px rgba(15, 23, 42, .18);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+    color: ${TEXT2};
+    overflow: hidden;
+  `;
+  }
+  function getPanelMarkup() {
+    return `
+    <div id="ajans-gider-drag-handle" style="
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:8px;
+      padding:10px 12px;
+      background:#ffffff;
+      border-bottom:1px solid ${BORDER2};
+      cursor:move;
+    ">
+      <div style="display:flex; align-items:center; gap:8px; min-width:0;">
+        <span aria-hidden="true" style="
+          width:8px; height:8px; border-radius:50%;
+          background:${ACCENT2}; flex:0 0 auto;
+        "></span>
+        <div style="font-weight:600; font-size:13px; color:${TEXT2}; letter-spacing:-0.01em;">
+          Gider Doldurucu
+        </div>
+      </div>
+      <div style="display:flex; align-items:center; gap:2px;">
+        <button id="ajans-gider-help-toggle" title="Nas\u0131l kullan\u0131l\u0131r?" aria-label="Yard\u0131m" style="
+          border:0;
+          background:transparent;
+          color:${MUTED2};
+          border-radius:6px;
+          width:26px; height:26px;
+          cursor:pointer;
+          font-size:14px;
+          font-weight:600;
+          display:inline-flex; align-items:center; justify-content:center;
+        ">?</button>
+        <button id="ajans-gider-minimize" title="K\xFC\xE7\xFClt" aria-label="K\xFC\xE7\xFClt" style="
+          border:0;
+          background:transparent;
+          color:${MUTED2};
+          border-radius:6px;
+          width:26px; height:26px;
+          cursor:pointer;
+          font-size:16px;
+          line-height:1;
+          display:inline-flex; align-items:center; justify-content:center;
+        ">\u2013</button>
+      </div>
+    </div>
+
+    <div id="ajans-gider-body" style="padding:12px;">
+      <div id="ajans-gider-help" hidden style="
+        margin-bottom:10px;
+        padding:10px 12px;
+        background:${SOFT_BG2};
+        border:1px solid ${BORDER2};
+        border-radius:10px;
+        font-size:12px;
+        color:${MUTED2};
+        line-height:1.5;
+      ">
+        Excel'den t\xFCm sat\u0131rlar\u0131 kopyalay\u0131p a\u015Fa\u011F\u0131ya yap\u0131\u015Ft\u0131r. Sayfa de\u011Fi\u015Fse de veri burada kal\u0131r.<br>
+        <span style="color:${TEXT2};">S\xFCtun s\u0131ras\u0131:</span> Ki\u015Fi \xB7 Marka \xB7 Tutar \xB7 Kay\u0131t ismi
+      </div>
+
+      <div id="ajans-gider-data-collapsed" hidden style="
         display:flex;
         align-items:center;
         justify-content:space-between;
-        gap:10px;
-        padding:10px 12px;
-        background:#1f6feb;
-        color:white;
-        cursor:move;
+        gap:8px;
+        padding:9px 12px;
+        background:${SOFT_BG2};
+        border:1px solid ${BORDER2};
+        border-radius:10px;
+        font-size:12px;
+        color:${TEXT2};
+        margin-bottom:10px;
       ">
-        <div style="font-weight:700; font-size:15px;">Ajans Gider Doldurucu</div>
-        <button id="ajans-gider-minimize" style="
+        <span style="display:inline-flex; align-items:center; gap:6px; min-width:0;">
+          <span aria-hidden="true" style="color:#10b981; font-weight:700;">\u2713</span>
+          <span id="ajans-gider-data-summary" style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
+            Veri haz\u0131r
+          </span>
+        </span>
+        <button id="ajans-gider-edit-data" style="
           border:0;
-          background:white;
-          color:#1f6feb;
-          border-radius:6px;
-          padding:5px 8px;
+          background:transparent;
+          color:${ACCENT2};
           cursor:pointer;
-          font-weight:700;
-        ">K\xFC\xE7\xFClt</button>
+          font-size:12px;
+          font-weight:600;
+          padding:2px 4px;
+        ">D\xFCzenle</button>
       </div>
 
-      <div id="ajans-gider-body" style="padding:14px;">
-        <div style="font-size:12px; color:#555; margin-bottom:8px; line-height:1.4;">
-          Excel'den t\xFCm sat\u0131rlar\u0131 tek seferde yap\u0131\u015Ft\u0131r. Sayfa de\u011Fi\u015Ftirsen de veri burada kal\u0131r.
-          <br>
-          Header yoksa s\u0131ra:
-          <br>
-          <b>TOPLAM TUTAR, K\u0130\u015E\u0130, KAYIT \u0130SM\u0130, MARKA, TAR\u0130H, \xD6DENECE\u011E\u0130 TAR\u0130H, ET\u0130KET</b>
-        </div>
-
-        <textarea id="ajans-gider-textarea" style="
+      <div id="ajans-gider-textarea-wrapper" style="margin-bottom:10px;">
+        <textarea id="ajans-gider-textarea" placeholder="Excel sat\u0131rlar\u0131n\u0131 buraya yap\u0131\u015Ft\u0131r" style="
           width:100%;
-          height:120px;
+          height:96px;
           box-sizing:border-box;
-          font-family:monospace;
+          font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
           font-size:12px;
-          padding:8px;
-          border:1px solid #ccc;
-          border-radius:8px;
+          padding:8px 10px;
+          border:1px solid ${BORDER2};
+          border-radius:10px;
           resize:vertical;
+          color:${TEXT2};
+          background:#ffffff;
+          outline:none;
         "></textarea>
+      </div>
 
-        <div style="margin-top:8px;">
-          <label style="display:block; font-size:12px; font-weight:700; margin-bottom:4px;">Doldurulacak kay\u0131t</label>
-          <select id="ajans-gider-row-select" style="
-            width:100%;
-            height:34px;
-            border:1px solid #ccc;
-            border-radius:8px;
-            padding:6px;
-            box-sizing:border-box;
-            background:white;
-          "></select>
-        </div>
+      <div id="ajans-gider-empty" style="
+        padding:14px;
+        background:${SOFT_BG2};
+        border:1px dashed ${BORDER2};
+        border-radius:10px;
+        font-size:12px;
+        color:${MUTED2};
+        text-align:center;
+        line-height:1.5;
+      ">
+        Veriyi yap\u0131\u015Ft\u0131r\u0131nca se\xE7ili kay\u0131t burada g\xF6r\xFCnecek.
+      </div>
 
-        <div id="ajans-gider-payment-section" style="margin-top:8px;">
-          <label style="display:block; font-size:12px; font-weight:700; margin-bottom:4px;">\xD6deme kalemi</label>
-          <select id="ajans-gider-payment-select" style="
-            width:100%;
-            height:34px;
-            border:1px solid #ccc;
-            border-radius:8px;
-            padding:6px;
-            box-sizing:border-box;
-            background:white;
-          "></select>
-        </div>
-
-        <div id="ajans-gider-preview" style="
-          margin-top:8px;
-          padding:8px;
-          background:#f6f8fa;
-          border-radius:8px;
-          font-size:12px;
-          white-space:pre-wrap;
-          min-height:70px;
-          max-height:150px;
-          overflow:auto;
-        ">Veriyi yap\u0131\u015Ft\u0131r\u0131nca burada kay\u0131t listesi \xE7\u0131kacak.</div>
-
-        <div id="ajans-gider-status" style="
-          margin-top:8px;
-          font-size:12px;
-          color:#555;
-        ">Haz\u0131r.</div>
-
-        <div id="ajans-gider-payment-actions" style="margin-top:10px;">
-          <button id="ajans-gider-fill-payment" style="
-            width:100%;
-            padding:9px 12px;
-            background:#b42318;
-            color:white;
-            border:0;
-            border-radius:6px;
-            font-weight:700;
+      <div id="ajans-gider-record" hidden style="
+        border:1px solid ${BORDER2};
+        border-radius:12px;
+        background:#ffffff;
+        overflow:hidden;
+      ">
+        <div style="
+          display:flex;
+          align-items:center;
+          gap:6px;
+          padding:8px 10px;
+          background:${SOFT_BG2};
+          border-bottom:1px solid ${BORDER2};
+        ">
+          <button id="ajans-gider-prev" title="\xD6nceki kay\u0131t" aria-label="\xD6nceki kay\u0131t" style="
+            border:1px solid ${BORDER2};
+            background:#ffffff;
+            color:${TEXT2};
+            border-radius:7px;
+            width:26px; height:26px;
             cursor:pointer;
-          ">Se\xE7ili \xD6deme Kalemini Doldur</button>
+            font-size:14px;
+            line-height:1;
+            flex:0 0 auto;
+            display:inline-flex; align-items:center; justify-content:center;
+          ">\u2039</button>
+
+          <div style="position:relative; flex:1 1 auto; min-width:0;">
+            <select id="ajans-gider-row-select" title="Kay\u0131t se\xE7" style="
+              appearance:none;
+              -webkit-appearance:none;
+              width:100%;
+              height:28px;
+              padding:0 26px 0 10px;
+              border:1px solid ${BORDER2};
+              border-radius:7px;
+              background:#ffffff;
+              color:${TEXT2};
+              font-size:12px;
+              font-weight:600;
+              font-family:inherit;
+              cursor:pointer;
+              outline:none;
+              text-overflow:ellipsis;
+              white-space:nowrap;
+              overflow:hidden;
+            "></select>
+            <span aria-hidden="true" style="
+              position:absolute;
+              right:8px; top:50%;
+              transform:translateY(-50%);
+              pointer-events:none;
+              color:${MUTED2};
+              font-size:10px;
+            ">\u25BE</span>
+          </div>
+
+          <button id="ajans-gider-next" title="Sonraki kay\u0131t" aria-label="Sonraki kay\u0131t" style="
+            border:1px solid ${BORDER2};
+            background:#ffffff;
+            color:${TEXT2};
+            border-radius:7px;
+            width:26px; height:26px;
+            cursor:pointer;
+            font-size:14px;
+            line-height:1;
+            flex:0 0 auto;
+            display:inline-flex; align-items:center; justify-content:center;
+          ">\u203A</button>
         </div>
 
-        <div style="display:flex; gap:8px; justify-content:space-between; margin-top:10px;">
-          <div style="display:flex; gap:8px;">
-            <button id="ajans-gider-prev" style="
-              padding:8px 10px;
-              background:#eee;
-              color:#111;
-              border:0;
-              border-radius:6px;
-              font-weight:700;
-              cursor:pointer;
-            ">\xD6nceki</button>
+        <div style="padding:12px;">
+          <div id="ajans-gider-supplier" style="
+            font-size:15px;
+            font-weight:700;
+            color:${TEXT2};
+            letter-spacing:-0.01em;
+            line-height:1.3;
+            word-break:break-word;
+          ">\u2014</div>
 
-            <button id="ajans-gider-next" style="
-              padding:8px 10px;
-              background:#eee;
-              color:#111;
-              border:0;
-              border-radius:6px;
-              font-weight:700;
-              cursor:pointer;
-            ">Sonraki</button>
-          </div>
+          <div id="ajans-gider-meta" style="
+            display:flex;
+            flex-wrap:wrap;
+            gap:6px;
+            margin-top:6px;
+            font-size:11px;
+            color:${MUTED2};
+          "></div>
 
-          <div style="display:flex; gap:8px;">
-            <button id="ajans-gider-clear" style="
-              padding:8px 10px;
-              background:#ddd;
-              color:#111;
-              border:0;
-              border-radius:6px;
-              font-weight:700;
-              cursor:pointer;
-            ">Temizle</button>
+          <div id="ajans-gider-amount" style="
+            margin-top:10px;
+            font-size:22px;
+            font-weight:700;
+            color:${TEXT2};
+            letter-spacing:-0.02em;
+          ">\u20BA 0,00</div>
 
-            <div id="ajans-gider-expense-actions">
-              <button id="ajans-gider-fill" style="
-                padding:8px 12px;
-                background:#111;
-                color:white;
-                border:0;
-                border-radius:6px;
-                font-weight:700;
-                cursor:pointer;
-              ">Ana Gideri Doldur</button>
-            </div>
-          </div>
+          <div id="ajans-gider-dates" style="
+            margin-top:4px;
+            font-size:11px;
+            color:${MUTED2};
+          "></div>
+
+          <div id="ajans-gider-title" title="" style="
+            margin-top:10px;
+            padding-top:10px;
+            border-top:1px solid ${BORDER2};
+            font-size:12px;
+            color:${MUTED2};
+            line-height:1.45;
+            word-break:break-word;
+            display:-webkit-box;
+            -webkit-line-clamp:2;
+            -webkit-box-orient:vertical;
+            overflow:hidden;
+          ">\u2014</div>
         </div>
       </div>
-    `;
-    return panel;
+
+      <div id="ajans-gider-status-wrapper" hidden style="
+        margin-top:10px;
+        display:flex;
+        align-items:flex-start;
+        gap:6px;
+        font-size:11px;
+        color:${MUTED2};
+        line-height:1.45;
+      ">
+        <span id="ajans-gider-status-icon" aria-hidden="true" style="flex:0 0 auto;">\xB7</span>
+        <span id="ajans-gider-status"></span>
+      </div>
+
+      <div style="
+        display:flex;
+        align-items:center;
+        justify-content:space-between;
+        gap:8px;
+        margin-top:12px;
+      ">
+        <button id="ajans-gider-clear" style="
+          padding:0 4px;
+          background:transparent;
+          color:${MUTED2};
+          border:0;
+          border-radius:6px;
+          font-size:12px;
+          font-weight:500;
+          cursor:pointer;
+          text-decoration:underline;
+          text-underline-offset:3px;
+        ">Temizle</button>
+
+        <div id="ajans-gider-expense-actions" style="display:none;">
+          <button id="ajans-gider-fill" style="
+            padding:9px 14px;
+            background:${ACCENT2};
+            color:#ffffff;
+            border:0;
+            border-radius:9px;
+            font-weight:600;
+            font-size:13px;
+            cursor:pointer;
+            box-shadow: 0 1px 0 rgba(15,23,42,.05);
+            letter-spacing:-0.01em;
+          ">Ana Gideri Doldur</button>
+        </div>
+      </div>
+    </div>
+  `;
   }
+
+  // src/panel/panelState.js
+  var { ACCENT: ACCENT3, ACCENT_DARK: ACCENT_DARK2, MUTED: MUTED3 } = PANEL_COLORS;
   function setStatus(message, isError = false) {
+    const wrapper = $("#ajans-gider-status-wrapper");
     const status = $("#ajans-gider-status");
-    if (!status) return;
-    status.textContent = message;
-    status.style.color = isError ? "#b42318" : "#555";
+    const icon = $("#ajans-gider-status-icon");
+    if (!wrapper || !status || !icon) return;
+    const text = String(message || "").trim();
+    if (!text || text === "Haz\u0131r." || text === "Haz\u0131r") {
+      wrapper.hidden = true;
+      status.textContent = "";
+      return;
+    }
+    wrapper.hidden = false;
+    status.textContent = text;
+    if (isError) {
+      icon.textContent = "!";
+      icon.style.color = "#b42318";
+      status.style.color = "#b42318";
+    } else {
+      icon.textContent = "\xB7";
+      icon.style.color = MUTED3;
+      status.style.color = MUTED3;
+    }
   }
   function setFillButtonLoading(button, loading) {
     if (!button) return;
@@ -935,24 +1392,22 @@
     button.textContent = loading ? "Dolduruluyor..." : "Ana Gideri Doldur";
     button.style.opacity = loading ? "0.65" : "1";
     button.style.cursor = loading ? "not-allowed" : "pointer";
-  }
-  function setPaymentButtonLoading(button, loading) {
-    if (!button) return;
-    button.disabled = loading;
-    button.textContent = loading ? "\xD6deme Haz\u0131rlan\u0131yor..." : "Se\xE7ili \xD6deme Kalemini Doldur";
-    button.style.opacity = loading ? "0.65" : "1";
-    button.style.cursor = loading ? "not-allowed" : "pointer";
+    button.style.background = loading ? ACCENT_DARK2 : ACCENT3;
   }
   function applyMinimizedState(panel, body, button) {
     const minimized = isPanelMinimized();
     body.style.display = minimized ? "none" : "block";
-    button.textContent = minimized ? "A\xE7" : "K\xFC\xE7\xFClt";
-    panel.style.width = minimized ? "300px" : "480px";
+    button.title = minimized ? "A\xE7" : "K\xFC\xE7\xFClt";
+    button.setAttribute("aria-label", minimized ? "A\xE7" : "K\xFC\xE7\xFClt");
+    button.textContent = minimized ? "+" : "\u2013";
+    panel.style.width = minimized ? "240px" : "360px";
   }
 
   // src/panel/controller.js
   var isFilling = false;
   var lastDecisionLogKey = "";
+  var isDataEditorOpen = true;
+  var isHelpOpen = false;
   function appendDebugLog(event, details = {}) {
     const entry = {
       ts: (/* @__PURE__ */ new Date()).toISOString(),
@@ -983,139 +1438,247 @@
     return getPageDetectionSnapshot().flow;
   }
   function updateFlowVisibility(flow = getCurrentFlow()) {
-    const paymentSection = $("#ajans-gider-payment-section");
-    const paymentActions = $("#ajans-gider-payment-actions");
     const expenseActions = $("#ajans-gider-expense-actions");
-    if (paymentSection) {
-      paymentSection.style.display = flow === "payment" ? "block" : "none";
-    }
-    if (paymentActions) {
-      paymentActions.style.display = flow === "payment" ? "block" : "none";
-    }
     if (expenseActions) {
       expenseActions.style.display = flow === "expense" ? "block" : "none";
     }
   }
+  function applyDataEditorState() {
+    const wrapper = $("#ajans-gider-textarea-wrapper");
+    const collapsed = $("#ajans-gider-data-collapsed");
+    const textarea = $("#ajans-gider-textarea");
+    if (!wrapper || !collapsed || !textarea) return;
+    const hasData = String(textarea.value || "").trim().length > 0;
+    if (!hasData) {
+      wrapper.hidden = false;
+      collapsed.hidden = true;
+      return;
+    }
+    if (isDataEditorOpen) {
+      wrapper.hidden = false;
+      collapsed.hidden = true;
+    } else {
+      wrapper.hidden = true;
+      collapsed.hidden = false;
+    }
+  }
+  function applyHelpState() {
+    const help = $("#ajans-gider-help");
+    if (!help) return;
+    help.hidden = !isHelpOpen;
+  }
+  function setDataSummary(rowCount) {
+    const summary = $("#ajans-gider-data-summary");
+    if (!summary) return;
+    if (rowCount > 0) {
+      summary.textContent = `${rowCount} kay\u0131t haz\u0131r`;
+    } else {
+      summary.textContent = "Veri haz\u0131r";
+    }
+  }
+  function setStepButtonsState(selectedIndex, rowsLength) {
+    const prev = $("#ajans-gider-prev");
+    const next = $("#ajans-gider-next");
+    if (prev) {
+      const disabled = rowsLength <= 1 || selectedIndex <= 0;
+      prev.disabled = disabled;
+      prev.style.opacity = disabled ? "0.4" : "1";
+      prev.style.cursor = disabled ? "not-allowed" : "pointer";
+    }
+    if (next) {
+      const disabled = rowsLength <= 1 || selectedIndex >= rowsLength - 1;
+      next.disabled = disabled;
+      next.style.opacity = disabled ? "0.4" : "1";
+      next.style.cursor = disabled ? "not-allowed" : "pointer";
+    }
+  }
+  function renderRecordCard(row, selectedIndex, rowsLength) {
+    const empty = $("#ajans-gider-empty");
+    const record = $("#ajans-gider-record");
+    const supplier = $("#ajans-gider-supplier");
+    const meta = $("#ajans-gider-meta");
+    const amount = $("#ajans-gider-amount");
+    const dates = $("#ajans-gider-dates");
+    const title = $("#ajans-gider-title");
+    if (!empty || !record) return;
+    if (!row) {
+      empty.hidden = false;
+      record.hidden = true;
+      return;
+    }
+    empty.hidden = true;
+    record.hidden = false;
+    if (supplier) {
+      supplier.textContent = String(row.supplier || "Tedarik\xE7i yok").trim();
+    }
+    if (meta) {
+      meta.innerHTML = "";
+      const chips = [];
+      const brand = String(row.brand || "").trim();
+      const tag = String(row.tag || "").trim();
+      const rawBrand = row.rawBrand && row.rawBrand !== row.brand ? String(row.rawBrand).trim() : "";
+      if (brand) chips.push({ label: brand, tone: "accent" });
+      if (tag) chips.push({ label: tag, tone: "muted" });
+      if (rawBrand) chips.push({ label: `Excel: ${rawBrand}`, tone: "muted" });
+      if (!chips.length) {
+        meta.style.display = "none";
+      } else {
+        meta.style.display = "flex";
+        chips.forEach(({ label, tone }) => {
+          const span = document.createElement("span");
+          span.textContent = label;
+          span.style.cssText = tone === "accent" ? `
+              padding:2px 8px;
+              border-radius:999px;
+              background:#e0ecff;
+              color:#0f4fc1;
+              font-size:11px;
+              font-weight:600;
+              line-height:1.6;
+            ` : `
+              padding:2px 8px;
+              border-radius:999px;
+              background:#f1f5f9;
+              color:#475569;
+              font-size:11px;
+              font-weight:500;
+              line-height:1.6;
+            `;
+          meta.appendChild(span);
+        });
+      }
+    }
+    if (amount) {
+      amount.textContent = `\u20BA ${formatAmountTR(row.amount)}`;
+    }
+    if (dates) {
+      const parts = [];
+      if (row.issueDate) parts.push(`Fatura: ${formatDateTR(row.issueDate)}`);
+      if (row.dueDate) parts.push(`\xD6deme: ${formatDateTR(row.dueDate)}`);
+      dates.textContent = parts.join("  \xB7  ");
+      dates.style.display = parts.length ? "block" : "none";
+    }
+    if (title) {
+      const text = String(row.title || "").trim();
+      if (text) {
+        title.textContent = text;
+        title.title = text;
+        title.style.display = "-webkit-box";
+      } else {
+        title.textContent = "";
+        title.title = "";
+        title.style.display = "none";
+      }
+    }
+    setStepButtonsState(selectedIndex, rowsLength);
+  }
   function syncPanelRows() {
     const textarea = $("#ajans-gider-textarea");
     const select = $("#ajans-gider-row-select");
-    const paymentSelect = $("#ajans-gider-payment-select");
-    const preview = $("#ajans-gider-preview");
-    if (!textarea || !select || !paymentSelect || !preview) return;
+    if (!textarea) return;
     const flow = getCurrentFlow();
     updateFlowVisibility(flow);
+    applyHelpState();
     let rows = [];
+    let parseError = null;
     try {
       rows = parseTable(textarea.value);
     } catch (err) {
+      parseError = err;
+    }
+    if (select) {
       select.innerHTML = "";
-      preview.textContent = String(err.message || err);
-      setStatus("Veri okunamad\u0131.", true);
+      if (rows.length) {
+        rows.forEach((row, index) => {
+          const option = document.createElement("option");
+          option.value = String(index);
+          const supplier = String(row.supplier || "Tedarik\xE7i yok").trim();
+          const shortSupplier = supplier.length > 28 ? `${supplier.slice(0, 28)}\u2026` : supplier;
+          const amountText = `${formatAmountTR(row.amount)} TL`;
+          option.textContent = `${index + 1} / ${rows.length}  \xB7  ${shortSupplier}  \xB7  ${amountText}`;
+          select.appendChild(option);
+        });
+      }
+    }
+    setDataSummary(rows.length);
+    applyDataEditorState();
+    if (parseError) {
+      renderRecordCard(null, 0, 0);
+      setStatus(String(parseError.message || parseError), true);
       return;
     }
-    select.innerHTML = "";
     if (!rows.length) {
-      paymentSelect.innerHTML = "";
-      preview.textContent = "Veriyi yap\u0131\u015Ft\u0131r\u0131nca burada kay\u0131t listesi \xE7\u0131kacak.";
-      setStatus(
-        flow === "expense" ? "Gider formundas\u0131n. Veri yap\u0131\u015Ft\u0131r\u0131nca ana gideri doldurabilirsin." : flow === "payment" ? "Fi\u015F/fatura detay\u0131ndas\u0131n. Veri yap\u0131\u015Ft\u0131r\u0131nca \xF6deme kalemini haz\u0131rlayabilirsin." : "Popup haz\u0131r. Gider formuna veya fi\u015F/fatura detay\u0131na gidince ilgili i\u015Flem g\xF6r\xFCn\xFCr."
-      );
+      renderRecordCard(null, 0, 0);
+      if (flow === "expense") {
+        setStatus("Gider formundas\u0131n. Veri yap\u0131\u015Ft\u0131r\u0131nca doldurulur.");
+      } else {
+        setStatus("");
+      }
       return;
     }
     const selectedIndex = getSelectedIndex(rows.length);
-    rows.forEach((row, index) => {
-      const option = document.createElement("option");
-      option.value = String(index);
-      const title = String(row.title || "Kay\u0131t ismi yok").replace(/\s+/g, " ").trim();
-      const shortTitle = title.length > 65 ? `${title.slice(0, 65)}...` : title;
-      option.textContent = `${index + 1}. ${row.supplier || "Tedarik\xE7i yok"} | ${row.brand || "Kategori yok"} | ${formatAmountTR(
-        row.amount
-      )} TL | ${shortTitle}`;
-      select.appendChild(option);
-    });
-    select.value = String(selectedIndex);
-    const selected = rows[selectedIndex];
-    const paymentItems = parsePaymentItems(selected);
-    const selectedPaymentIndex = getSelectedPaymentIndex(paymentItems.length);
-    const selectedPayment = paymentItems[selectedPaymentIndex];
-    const parsedPaymentTotal = paymentItemsTotal(paymentItems);
-    const rowAmount = parseAmount(selected.amount);
-    const paymentTotalMismatch = paymentItems.length > 1 && Math.abs(parsedPaymentTotal - rowAmount) >= 0.01;
-    paymentSelect.innerHTML = "";
-    paymentItems.forEach((item, index) => {
-      const option = document.createElement("option");
-      option.value = String(index);
-      const description = String(item.description || "\xD6deme").replace(/\s+/g, " ").trim();
-      const shortDescription = description.length > 58 ? `${description.slice(0, 58)}...` : description;
-      option.textContent = `${index + 1}. ${formatAmountTR(
-        item.amount
-      )} TL | ${shortDescription}`;
-      paymentSelect.appendChild(option);
-    });
-    paymentSelect.value = String(selectedPaymentIndex);
-    paymentSelect.disabled = paymentItems.length <= 1;
-    const previewLines = [
-      `Se\xE7ili kay\u0131t: ${selectedIndex + 1} / ${rows.length}`,
-      `Tedarik\xE7i: ${selected.supplier || "-"}`,
-      `Kategori / Marka: ${selected.brand || "-"}`,
-      `Tutar: ${formatAmountTR(selected.amount)} TL`,
-      `Fi\u015F/Fatura tarihi: ${formatDateTR(selected.issueDate)}`,
-      `\xD6denece\u011Fi tarih: ${formatDateTR(selected.dueDate)}`,
-      `Etiket: ${selected.tag || "-"}`
-    ];
-    if (flow === "payment") {
-      previewLines.push(
-        `\xD6deme kalemi: ${selectedPayment ? `${selectedPaymentIndex + 1} / ${paymentItems.length} - ${formatAmountTR(
-          selectedPayment.amount
-        )} TL` : "bulunamad\u0131"}`
-      );
-      if (paymentTotalMismatch) {
-        previewLines.push(
-          `Uyar\u0131: Alt \xF6deme toplam\u0131 ${formatAmountTR(
-            parsedPaymentTotal
-          )} TL, ana tutar ${formatAmountTR(rowAmount)} TL.`
-        );
-      }
+    if (select) select.value = String(selectedIndex);
+    renderRecordCard(rows[selectedIndex], selectedIndex, rows.length);
+    if (flow === "expense") {
+      setStatus("");
+    } else {
+      setStatus("Yeni gider formuna gidince bu kayd\u0131 doldurabilirsin.");
     }
-    preview.textContent = [
-      ...previewLines,
-      "",
-      selected.title || "Kay\u0131t ismi yok"
-    ].join("\n");
-    setStatus(
-      flow === "expense" ? "Gider formundas\u0131n. Bu ekranda sadece ana gider giri\u015Fi yap\u0131l\u0131r." : flow === "payment" ? "Fi\u015F/fatura detay\u0131ndas\u0131n. Bu ekranda sadece \xF6deme kalemi haz\u0131rlan\u0131r." : "Popup haz\u0131r. Gider formuna gidince se\xE7ili kayd\u0131 doldurabilirsin."
-    );
   }
   function registerPanelEvents(panel) {
     const textarea = $("#ajans-gider-textarea");
     const select = $("#ajans-gider-row-select");
-    const paymentSelect = $("#ajans-gider-payment-select");
     const handle = $("#ajans-gider-drag-handle");
     const body = $("#ajans-gider-body");
     const minimizeButton = $("#ajans-gider-minimize");
+    const helpButton = $("#ajans-gider-help-toggle");
+    const editDataButton = $("#ajans-gider-edit-data");
     textarea.value = localStorage.getItem(STORAGE_TEXT_KEY) || "";
+    isDataEditorOpen = String(textarea.value || "").trim().length === 0;
+    isHelpOpen = false;
     makePanelDraggable(panel, handle);
     applyMinimizedState(panel, body, minimizeButton);
     textarea.addEventListener("input", () => {
       localStorage.setItem(STORAGE_TEXT_KEY, textarea.value);
       setSelectedIndex(0);
+      isDataEditorOpen = true;
       syncPanelRows();
     });
-    select.addEventListener("change", () => {
-      setSelectedIndex(Number(select.value || 0));
-      setSelectedPaymentIndex(0);
-      syncPanelRows();
+    textarea.addEventListener("focus", () => {
+      textarea.style.borderColor = "#1f6feb";
     });
-    paymentSelect.addEventListener("change", () => {
-      setSelectedPaymentIndex(Number(paymentSelect.value || 0));
-      syncPanelRows();
+    textarea.addEventListener("blur", () => {
+      textarea.style.borderColor = "#e5e7eb";
+      if (String(textarea.value || "").trim().length > 0) {
+        isDataEditorOpen = false;
+        applyDataEditorState();
+      }
     });
+    if (select) {
+      select.addEventListener("change", () => {
+        setSelectedIndex(Number(select.value || 0));
+        syncPanelRows();
+      });
+    }
+    if (helpButton) {
+      helpButton.addEventListener("click", () => {
+        isHelpOpen = !isHelpOpen;
+        applyHelpState();
+      });
+    }
+    if (editDataButton) {
+      editDataButton.addEventListener("click", () => {
+        isDataEditorOpen = true;
+        applyDataEditorState();
+        const ta = $("#ajans-gider-textarea");
+        if (ta) ta.focus();
+      });
+    }
     $("#ajans-gider-prev").addEventListener("click", () => {
       const rows = getRowsFromTextarea();
       if (!rows.length) return;
       const current = getSelectedIndex(rows.length);
       setSelectedIndex(Math.max(0, current - 1));
-      setSelectedPaymentIndex(0);
       syncPanelRows();
     });
     $("#ajans-gider-next").addEventListener("click", () => {
@@ -1123,46 +1686,15 @@
       if (!rows.length) return;
       const current = getSelectedIndex(rows.length);
       setSelectedIndex(Math.min(rows.length - 1, current + 1));
-      setSelectedPaymentIndex(0);
       syncPanelRows();
     });
     $("#ajans-gider-clear").addEventListener("click", () => {
       textarea.value = "";
       localStorage.removeItem(STORAGE_TEXT_KEY);
       clearSelectionState();
+      isDataEditorOpen = true;
       syncPanelRows();
       setStatus("Veri temizlendi.");
-    });
-    $("#ajans-gider-fill-payment").addEventListener("click", async (event) => {
-      const button = event.currentTarget;
-      if (isFilling) return;
-      isFilling = true;
-      setPaymentButtonLoading(button, true);
-      try {
-        const rows = getRowsFromTextarea();
-        if (!rows.length) throw new Error("Sat\u0131r bulunamad\u0131.");
-        const rowIndex = getSelectedIndex(rows.length);
-        const row = rows[rowIndex];
-        const paymentItems = parsePaymentItems(row);
-        const paymentIndex = getSelectedPaymentIndex(paymentItems.length);
-        const paymentItem = paymentItems[paymentIndex];
-        if (!paymentItem) throw new Error("\xD6deme kalemi bulunamad\u0131.");
-        setStatus(
-          `${rowIndex + 1}. kayd\u0131n ${paymentIndex + 1}. \xF6deme kalemi haz\u0131rlan\u0131yor...`
-        );
-        await fillPayment(paymentItem);
-        setStatus(
-          `${formatAmountTR(
-            paymentItem.amount
-          )} TL \xF6deme forma yaz\u0131ld\u0131. Para\u015F\xFCt'teki \xD6DEME EKLE butonuna manuel bas.`
-        );
-      } catch (err) {
-        console.error("[AJANS] \xD6deme doldurma hatas\u0131:", err);
-        setStatus(err.message || String(err), true);
-      } finally {
-        isFilling = false;
-        setPaymentButtonLoading(button, false);
-      }
     });
     $("#ajans-gider-fill").addEventListener("click", async (event) => {
       const button = event.currentTarget;

@@ -1,7 +1,6 @@
 import {
   STORAGE_INDEX_KEY,
   STORAGE_MIN_KEY,
-  STORAGE_PAYMENT_INDEX_KEY,
   STORAGE_POS_KEY,
 } from "../config/constants.js";
 
@@ -13,8 +12,8 @@ export function getSavedPanelPosition() {
   }
 }
 
-export function savePanelPosition(panel) {
-  const rect = panel.getBoundingClientRect();
+export function savePanelPosition(panel, position = null) {
+  const rect = position || panel.getBoundingClientRect();
 
   localStorage.setItem(
     STORAGE_POS_KEY,
@@ -56,23 +55,8 @@ export function setSelectedIndex(index) {
   localStorage.setItem(STORAGE_INDEX_KEY, String(index));
 }
 
-export function getSelectedPaymentIndex(itemsLength) {
-  const raw = Number(localStorage.getItem(STORAGE_PAYMENT_INDEX_KEY) || 0);
-
-  if (!Number.isFinite(raw)) return 0;
-  if (raw < 0) return 0;
-  if (raw >= itemsLength) return Math.max(0, itemsLength - 1);
-
-  return raw;
-}
-
-export function setSelectedPaymentIndex(index) {
-  localStorage.setItem(STORAGE_PAYMENT_INDEX_KEY, String(index));
-}
-
 export function clearSelectionState() {
   localStorage.removeItem(STORAGE_INDEX_KEY);
-  localStorage.removeItem(STORAGE_PAYMENT_INDEX_KEY);
 }
 
 export function isPanelMinimized() {

@@ -1,4 +1,4 @@
-import { $, $$, getActiveAppDocument, isVisible } from "./dom.js";
+import { $, $$, getActiveAppDocument } from "./dom.js";
 
 function getWindowPathname(targetWindow) {
   try {
@@ -30,16 +30,8 @@ export function getAppPathname() {
   );
 }
 
-function hasVisiblePaymentForm(root) {
-  return $$("[data-tns='add-payment']", root).some(isVisible);
-}
-
 function matchesExpenseFormPath(pathname) {
   return /\/fis-faturalar\/yeni(?:\/hizli)?\/?$/.test(pathname);
-}
-
-function matchesPurchaseBillShowPath(pathname) {
-  return /\/fis-faturalar\/\d+(?:\/.*)?\/?$/.test(pathname);
 }
 
 export function getPageDetectionSnapshot(root = getActiveAppDocument()) {
@@ -48,12 +40,7 @@ export function getPageDetectionSnapshot(root = getActiveAppDocument()) {
     $("input[data-tid='record-id'][data-ttype='page']", root),
   );
   const hasPurchaseBillShow = Boolean($("[data-tns='purchase-bills-show']", root));
-  const hasPaymentForm = hasVisiblePaymentForm(root);
   const isExpense = matchesExpenseFormPath(pathname);
-  const isPurchase =
-    matchesPurchaseBillShowPath(pathname) ||
-    (/\/fis-faturalar(?:\/|$)/.test(pathname) &&
-      (hasRecordId || hasPurchaseBillShow || hasPaymentForm));
 
   return {
     href: location.href,
@@ -64,17 +51,11 @@ export function getPageDetectionSnapshot(root = getActiveAppDocument()) {
     activeDocumentPathname: getWindowPathname(root.defaultView),
     hasRecordId,
     hasPurchaseBillShow,
-    hasPaymentForm,
     isExpense,
-    isPurchase,
-    flow: isExpense ? "expense" : isPurchase ? "payment" : "idle",
+    flow: isExpense ? "expense" : "idle",
   };
 }
 
 export function isExpenseFormPage() {
   return getPageDetectionSnapshot().isExpense;
-}
-
-export function isPurchaseBillShowPage(root = getActiveAppDocument()) {
-  return getPageDetectionSnapshot(root).isPurchase;
 }

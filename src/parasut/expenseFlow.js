@@ -1,22 +1,95 @@
 import { formatAmountTR, formatDateTR } from "../core/format.js";
-import { $, $$, getActiveAppDocument } from "./dom.js";
+import { $, $$, getActiveAppDocument, sleep, waitFor } from "./dom.js";
 import { selectCategory, selectTag } from "./dropdowns.js";
 import { setOptionalField, setRequiredField } from "./fields.js";
+import { findCalendarByLabels, setDateFieldByLabels } from "./datepicker.js";
 import { isExpenseFormPage } from "./pageDetection.js";
 import { fillSupplier } from "./supplier.js";
 import { elementText, norm } from "../core/text.js";
 
-function selectUnpaid() {
-  const root = getActiveAppDocument();
-  const unpaidRadio =
-    $("input[name='paymentStatus'][value='unpaid']", root) ||
-    $$("label", root)
-      .find((label) => norm(elementText(label)).includes("ÖDENECEK"))
-      ?.querySelector("input[type='radio']");
+const ISSUE_DATE_LABELS = [
+  "FİŞ/FATURA TARİHİ",
+  "FATURA TARİHİ",
+  "FİŞ TARİHİ",
+  "TARİH",
+];
 
-  if (unpaidRadio && !unpaidRadio.checked) {
-    unpaidRadio.click();
-    unpaidRadio.dispatchEvent(new Event("change", { bubbles: true }));
+const DUE_DATE_LABELS = ["ÖDENECEĞİ TARİH", "ÖDEME TARİHİ", "VADE TARİHİ"];
+
+function findUnpaidRadio(root) {
+  const direct = $("input[name='paymentStatus'][value='unpaid']", root);
+  if (direct) return direct;
+
+  const labels = $$("label", root).filter((label) =>
+    norm(elementText(label)).includes("ÖDENECEK"),
+  );
+
+  for (const label of labels) {
+    const inner = label.querySelector(
+      "input[type='radio'], input[type='checkbox']",
+    );
+    if (inner) return inner;
+
+    if (label.htmlFor) {
+      const target = label.ownerDocument.getElementById(label.htmlFor);
+      if (target?.matches?.("input")) return target;
+    }
+
+    const sibling =
+      label.previousElementSibling?.matches?.("input")
+        ? label.previousElementSibling
+        : label.nextElementSibling?.matches?.("input")
+          ? label.nextElementSibling
+          : null;
+    if (sibling) return sibling;
+
+    const parentRadio = label.parentElement?.querySelector?.(
+      "input[type='radio']",
+    );
+    if (parentRadio) return parentRadio;
+  }
+
+  return null;
+}
+
+async function selectUnpaidAndWaitDueDate() {
+  const root = getActiveAppDocument();
+  const unpaidRadio = findUnpaidRadio(root);
+
+  if (unpaidRadio) {
+    if (!unpaidRadio.checked) {
+      unpaidRadio.click();
+      unpaidRadio.dispatchEvent(new Event("change", { bubbles: true }));
+      await sleep(300);
+    }
+  } else {
+    console.warn(
+      "[AJANS] 'Ödenecek' radio bulunamadı, ödeneceği tarih alanı zaten açık olabilir.",
+    );
+  }
+
+  return waitFor(() => findCalendarByLabels(DUE_DATE_LABELS), 4000).catch(
+    () => null,
+  );
+}
+
+async function setIssueDate(date) {
+  const ok = await setDateFieldByLabels(ISSUE_DATE_LABELS, date);
+  if (!ok) {
+    throw new Error(
+      `Fiş/Fatura tarihi doldurulamadı: ${formatDateTR(date)}`,
+    );
+  }
+}
+
+async function setDueDate(date) {
+  const ok = await setDateFieldByLabels(DUE_DATE_LABELS, date);
+
+  if (!ok) {
+    console.warn(
+      "[AJANS] Ödeneceği tarih takvimi doldurulamadı:",
+      formatDateTR(date),
+    );
   }
 }
 
@@ -40,11 +113,8 @@ export async function fillExpense(row) {
   );
   await fillSupplier(row.supplier);
 
-  setRequiredField(
-    ["FİŞ/FATURA TARİHİ", "FATURA TARİHİ", "FİŞ TARİHİ", "TARİH"],
-    formatDateTR(row.issueDate),
-    "Fiş/Fatura tarihi",
-  );
+  await setIssueDate(row.issueDate);
+
   setRequiredField(
     ["TOPLAM TUTAR", "GENEL TOPLAM", "TUTAR"],
     formatAmountTR(row.amount),
@@ -52,12 +122,8 @@ export async function fillExpense(row) {
   );
   setOptionalField(["TOPLAM KDV", "KDV"], "0,00");
 
-  selectUnpaid();
-
-  setOptionalField(
-    ["ÖDENECEĞİ TARİH", "ÖDEME TARİHİ", "VADE TARİHİ"],
-    formatDateTR(row.dueDate),
-  );
+  await selectUnpaidAndWaitDueDate();
+  await setDueDate(row.dueDate);
 
   await selectCategory(row.brand);
 

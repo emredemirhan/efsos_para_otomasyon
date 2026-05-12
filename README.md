@@ -58,7 +58,6 @@ src/
   core/
     format.js          # tutar/tarih parse ve format helper'ları
     tableParser.js     # Excel/tab-separated veri parse işlemleri
-    paymentParser.js   # çoklu ödeme kalemi parse işlemleri
     text.js            # Türkçe normalize/key helper'ları
   parasut/
     dom.js             # DOM helper'ları, waitFor, setNativeValue
@@ -68,7 +67,6 @@ src/
     dropdowns.js       # kategori/etiket dropdown seçimi
     supplier.js        # tedarikçi autocomplete akışı
     expenseFlow.js     # ana gider formu doldurma akışı
-    paymentFlow.js     # ödeme kalemi formu doldurma akışı
   panel/
     view.js            # panel HTML'i ve buton loading state'leri
     controller.js      # panel eventleri, preview, flow görünürlüğü
@@ -85,10 +83,9 @@ dist/
 
 ## Flow Ayrımı
 
-Panel iki farklı Paraşüt ekranında farklı davranır:
+Panel yalnızca Paraşüt yeni gider formunda çalışır:
 
 - Gider formu sayfasında sadece `Ana Gideri Doldur` görünür.
-- Fiş/fatura detay sayfasında sadece `Ödeme kalemi` seçimi ve `Seçili Ödeme Kalemini Doldur` görünür.
 - Diğer sayfalarda popup tamamen gizlenir; veri `localStorage` içinde korunur.
 
 Bu ayrım `src/panel/controller.js` içindeki `getCurrentFlow()` ve `updateFlowVisibility()` üzerinden yönetilir.
@@ -100,6 +97,7 @@ Excel'den kopyalanan tab-separated veri paneldeki textarea'ya yapıştırılır.
 Header varsa tanınan örnek kolonlar:
 
 - `Toplam Tutar`
+- `Kalem Tutarı` / `Gider Tutarı` / `Ana Gider Tutarı`
 - `Tedarikçi` / `Kişi`
 - `Kayıt İsmi` / `Açıklama` / `Kalem`
 - `Marka` / `Kategori` / `Gider Kategorisi`
@@ -110,17 +108,14 @@ Header varsa tanınan örnek kolonlar:
 Header yoksa varsayılan sıra:
 
 ```txt
-TOPLAM TUTAR, KİŞİ, KAYIT İSMİ, MARKA, TARİH, ÖDENECEĞİ TARİH, ETİKET
+KİŞİ, EXCEL MARKA, KALEM TUTARI, KAYIT İSMİ
 ```
 
-Çoklu ödeme kalemi, kayıt ismi içinde satır satır şu formatla parse edilir:
-
-```txt
-Meta Ads - 100,50 TL
-Google Ads - 200 TL
-```
-
-Bu parse logic'i `src/core/paymentParser.js` içindedir.
+Headersız 4 kolonlu formatta Paraşüt'e yazılan ana gider tutarı 3. kolondaki
+`KALEM TUTARI` değeridir. Kategori/marka kayıt isminin ilk marka kodundan
+türetilir; bu yoksa 2. kolondaki Excel marka değeri kullanılır. Eski 5 kolonlu
+`KİŞİ, MARKA, GRUP/TOPLAM, KALEM TUTARI, KAYIT İSMİ` formatı da geriye dönük
+uyumluluk için hâlâ desteklenir; bu formatta GRUP/TOPLAM kolonu yok sayılır.
 
 ## Geliştirme Notları
 

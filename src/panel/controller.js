@@ -1,32 +1,29 @@
 import { PANEL_ID, STORAGE_TEXT_KEY } from "../config/constants.js";
-import { formatAmountTR, formatDateTR, parseAmount } from "../core/format.js";
-import { parsePaymentItems, paymentItemsTotal } from "../core/paymentParser.js";
+import { formatAmountTR, formatDateTR } from "../core/format.js";
 import { parseTable } from "../core/tableParser.js";
 import { fillExpense } from "../parasut/expenseFlow.js";
 import { $ } from "../parasut/dom.js";
 import { removeDuplicatePanels } from "../parasut/frame.js";
 import { getPageDetectionSnapshot } from "../parasut/pageDetection.js";
-import { fillPayment } from "../parasut/paymentFlow.js";
 import { makePanelDraggable } from "./drag.js";
 import {
   applyMinimizedState,
   createPanelElement,
   setFillButtonLoading,
-  setPaymentButtonLoading,
   setStatus,
 } from "./view.js";
 import {
   clearSelectionState,
   getSelectedIndex,
-  getSelectedPaymentIndex,
   savePanelPosition,
   setPanelMinimized,
   setSelectedIndex,
-  setSelectedPaymentIndex,
 } from "./storage.js";
 
 let isFilling = false;
 let lastDecisionLogKey = "";
+let isDataEditorOpen = true;
+let isHelpOpen = false;
 
 function appendDebugLog(event, details = {}) {
   const entry = {
@@ -64,166 +61,253 @@ function getCurrentFlow() {
 }
 
 function updateFlowVisibility(flow = getCurrentFlow()) {
-  const paymentSection = $("#ajans-gider-payment-section");
-  const paymentActions = $("#ajans-gider-payment-actions");
   const expenseActions = $("#ajans-gider-expense-actions");
-
-  if (paymentSection) {
-    paymentSection.style.display = flow === "payment" ? "block" : "none";
-  }
-
-  if (paymentActions) {
-    paymentActions.style.display = flow === "payment" ? "block" : "none";
-  }
 
   if (expenseActions) {
     expenseActions.style.display = flow === "expense" ? "block" : "none";
   }
 }
 
+function applyDataEditorState() {
+  const wrapper = $("#ajans-gider-textarea-wrapper");
+  const collapsed = $("#ajans-gider-data-collapsed");
+  const textarea = $("#ajans-gider-textarea");
+
+  if (!wrapper || !collapsed || !textarea) return;
+
+  const hasData = String(textarea.value || "").trim().length > 0;
+
+  if (!hasData) {
+    wrapper.hidden = false;
+    collapsed.hidden = true;
+    return;
+  }
+
+  if (isDataEditorOpen) {
+    wrapper.hidden = false;
+    collapsed.hidden = true;
+  } else {
+    wrapper.hidden = true;
+    collapsed.hidden = false;
+  }
+}
+
+function applyHelpState() {
+  const help = $("#ajans-gider-help");
+  if (!help) return;
+  help.hidden = !isHelpOpen;
+}
+
+function setDataSummary(rowCount) {
+  const summary = $("#ajans-gider-data-summary");
+  if (!summary) return;
+
+  if (rowCount > 0) {
+    summary.textContent = `${rowCount} kayıt hazır`;
+  } else {
+    summary.textContent = "Veri hazır";
+  }
+}
+
+function setStepButtonsState(selectedIndex, rowsLength) {
+  const prev = $("#ajans-gider-prev");
+  const next = $("#ajans-gider-next");
+
+  if (prev) {
+    const disabled = rowsLength <= 1 || selectedIndex <= 0;
+    prev.disabled = disabled;
+    prev.style.opacity = disabled ? "0.4" : "1";
+    prev.style.cursor = disabled ? "not-allowed" : "pointer";
+  }
+
+  if (next) {
+    const disabled = rowsLength <= 1 || selectedIndex >= rowsLength - 1;
+    next.disabled = disabled;
+    next.style.opacity = disabled ? "0.4" : "1";
+    next.style.cursor = disabled ? "not-allowed" : "pointer";
+  }
+}
+
+function renderRecordCard(row, selectedIndex, rowsLength) {
+  const empty = $("#ajans-gider-empty");
+  const record = $("#ajans-gider-record");
+  const supplier = $("#ajans-gider-supplier");
+  const meta = $("#ajans-gider-meta");
+  const amount = $("#ajans-gider-amount");
+  const dates = $("#ajans-gider-dates");
+  const title = $("#ajans-gider-title");
+
+  if (!empty || !record) return;
+
+  if (!row) {
+    empty.hidden = false;
+    record.hidden = true;
+    return;
+  }
+
+  empty.hidden = true;
+  record.hidden = false;
+
+  if (supplier) {
+    supplier.textContent = String(row.supplier || "Tedarikçi yok").trim();
+  }
+
+  if (meta) {
+    meta.innerHTML = "";
+
+    const chips = [];
+    const brand = String(row.brand || "").trim();
+    const tag = String(row.tag || "").trim();
+    const rawBrand =
+      row.rawBrand && row.rawBrand !== row.brand
+        ? String(row.rawBrand).trim()
+        : "";
+
+    if (brand) chips.push({ label: brand, tone: "accent" });
+    if (tag) chips.push({ label: tag, tone: "muted" });
+    if (rawBrand) chips.push({ label: `Excel: ${rawBrand}`, tone: "muted" });
+
+    if (!chips.length) {
+      meta.style.display = "none";
+    } else {
+      meta.style.display = "flex";
+      chips.forEach(({ label, tone }) => {
+        const span = document.createElement("span");
+        span.textContent = label;
+        span.style.cssText =
+          tone === "accent"
+            ? `
+              padding:2px 8px;
+              border-radius:999px;
+              background:#e0ecff;
+              color:#0f4fc1;
+              font-size:11px;
+              font-weight:600;
+              line-height:1.6;
+            `
+            : `
+              padding:2px 8px;
+              border-radius:999px;
+              background:#f1f5f9;
+              color:#475569;
+              font-size:11px;
+              font-weight:500;
+              line-height:1.6;
+            `;
+        meta.appendChild(span);
+      });
+    }
+  }
+
+  if (amount) {
+    amount.textContent = `₺ ${formatAmountTR(row.amount)}`;
+  }
+
+  if (dates) {
+    const parts = [];
+    if (row.issueDate) parts.push(`Fatura: ${formatDateTR(row.issueDate)}`);
+    if (row.dueDate) parts.push(`Ödeme: ${formatDateTR(row.dueDate)}`);
+    dates.textContent = parts.join("  ·  ");
+    dates.style.display = parts.length ? "block" : "none";
+  }
+
+  if (title) {
+    const text = String(row.title || "").trim();
+    if (text) {
+      title.textContent = text;
+      title.title = text;
+      title.style.display = "-webkit-box";
+    } else {
+      title.textContent = "";
+      title.title = "";
+      title.style.display = "none";
+    }
+  }
+
+  setStepButtonsState(selectedIndex, rowsLength);
+}
+
 function syncPanelRows() {
   const textarea = $("#ajans-gider-textarea");
   const select = $("#ajans-gider-row-select");
-  const paymentSelect = $("#ajans-gider-payment-select");
-  const preview = $("#ajans-gider-preview");
 
-  if (!textarea || !select || !paymentSelect || !preview) return;
+  if (!textarea) return;
 
   const flow = getCurrentFlow();
   updateFlowVisibility(flow);
+  applyHelpState();
 
   let rows = [];
+  let parseError = null;
 
   try {
     rows = parseTable(textarea.value);
   } catch (err) {
+    parseError = err;
+  }
+
+  if (select) {
     select.innerHTML = "";
-    preview.textContent = String(err.message || err);
-    setStatus("Veri okunamadı.", true);
+    if (rows.length) {
+      rows.forEach((row, index) => {
+        const option = document.createElement("option");
+        option.value = String(index);
+
+        const supplier = String(row.supplier || "Tedarikçi yok").trim();
+        const shortSupplier =
+          supplier.length > 28 ? `${supplier.slice(0, 28)}…` : supplier;
+        const amountText = `${formatAmountTR(row.amount)} TL`;
+
+        option.textContent = `${index + 1} / ${rows.length}  ·  ${shortSupplier}  ·  ${amountText}`;
+        select.appendChild(option);
+      });
+    }
+  }
+
+  setDataSummary(rows.length);
+  applyDataEditorState();
+
+  if (parseError) {
+    renderRecordCard(null, 0, 0);
+    setStatus(String(parseError.message || parseError), true);
     return;
   }
 
-  select.innerHTML = "";
-
   if (!rows.length) {
-    paymentSelect.innerHTML = "";
-    preview.textContent = "Veriyi yapıştırınca burada kayıt listesi çıkacak.";
-    setStatus(
-      flow === "expense"
-        ? "Gider formundasın. Veri yapıştırınca ana gideri doldurabilirsin."
-        : flow === "payment"
-          ? "Fiş/fatura detayındasın. Veri yapıştırınca ödeme kalemini hazırlayabilirsin."
-          : "Popup hazır. Gider formuna veya fiş/fatura detayına gidince ilgili işlem görünür.",
-    );
+    renderRecordCard(null, 0, 0);
+    if (flow === "expense") {
+      setStatus("Gider formundasın. Veri yapıştırınca doldurulur.");
+    } else {
+      setStatus("");
+    }
     return;
   }
 
   const selectedIndex = getSelectedIndex(rows.length);
+  if (select) select.value = String(selectedIndex);
 
-  rows.forEach((row, index) => {
-    const option = document.createElement("option");
-    option.value = String(index);
+  renderRecordCard(rows[selectedIndex], selectedIndex, rows.length);
 
-    const title = String(row.title || "Kayıt ismi yok")
-      .replace(/\s+/g, " ")
-      .trim();
-    const shortTitle = title.length > 65 ? `${title.slice(0, 65)}...` : title;
-
-    option.textContent = `${index + 1}. ${
-      row.supplier || "Tedarikçi yok"
-    } | ${row.brand || "Kategori yok"} | ${formatAmountTR(
-      row.amount,
-    )} TL | ${shortTitle}`;
-
-    select.appendChild(option);
-  });
-
-  select.value = String(selectedIndex);
-
-  const selected = rows[selectedIndex];
-  const paymentItems = parsePaymentItems(selected);
-  const selectedPaymentIndex = getSelectedPaymentIndex(paymentItems.length);
-  const selectedPayment = paymentItems[selectedPaymentIndex];
-  const parsedPaymentTotal = paymentItemsTotal(paymentItems);
-  const rowAmount = parseAmount(selected.amount);
-  const paymentTotalMismatch =
-    paymentItems.length > 1 && Math.abs(parsedPaymentTotal - rowAmount) >= 0.01;
-
-  paymentSelect.innerHTML = "";
-
-  paymentItems.forEach((item, index) => {
-    const option = document.createElement("option");
-    option.value = String(index);
-
-    const description = String(item.description || "Ödeme")
-      .replace(/\s+/g, " ")
-      .trim();
-    const shortDescription =
-      description.length > 58 ? `${description.slice(0, 58)}...` : description;
-
-    option.textContent = `${index + 1}. ${formatAmountTR(
-      item.amount,
-    )} TL | ${shortDescription}`;
-
-    paymentSelect.appendChild(option);
-  });
-
-  paymentSelect.value = String(selectedPaymentIndex);
-  paymentSelect.disabled = paymentItems.length <= 1;
-
-  const previewLines = [
-    `Seçili kayıt: ${selectedIndex + 1} / ${rows.length}`,
-    `Tedarikçi: ${selected.supplier || "-"}`,
-    `Kategori / Marka: ${selected.brand || "-"}`,
-    `Tutar: ${formatAmountTR(selected.amount)} TL`,
-    `Fiş/Fatura tarihi: ${formatDateTR(selected.issueDate)}`,
-    `Ödeneceği tarih: ${formatDateTR(selected.dueDate)}`,
-    `Etiket: ${selected.tag || "-"}`,
-  ];
-
-  if (flow === "payment") {
-    previewLines.push(
-      `Ödeme kalemi: ${
-      selectedPayment
-        ? `${selectedPaymentIndex + 1} / ${paymentItems.length} - ${formatAmountTR(
-            selectedPayment.amount,
-          )} TL`
-        : "bulunamadı"
-    }`);
-
-    if (paymentTotalMismatch) {
-      previewLines.push(
-        `Uyarı: Alt ödeme toplamı ${formatAmountTR(
-          parsedPaymentTotal,
-        )} TL, ana tutar ${formatAmountTR(rowAmount)} TL.`,
-      );
-    }
+  if (flow === "expense") {
+    setStatus("");
+  } else {
+    setStatus("Yeni gider formuna gidince bu kaydı doldurabilirsin.");
   }
-
-  preview.textContent = [
-    ...previewLines,
-    "",
-    selected.title || "Kayıt ismi yok",
-  ].join("\n");
-
-  setStatus(
-    flow === "expense"
-      ? "Gider formundasın. Bu ekranda sadece ana gider girişi yapılır."
-      : flow === "payment"
-        ? "Fiş/fatura detayındasın. Bu ekranda sadece ödeme kalemi hazırlanır."
-        : "Popup hazır. Gider formuna gidince seçili kaydı doldurabilirsin.",
-  );
 }
 
 function registerPanelEvents(panel) {
   const textarea = $("#ajans-gider-textarea");
   const select = $("#ajans-gider-row-select");
-  const paymentSelect = $("#ajans-gider-payment-select");
   const handle = $("#ajans-gider-drag-handle");
   const body = $("#ajans-gider-body");
   const minimizeButton = $("#ajans-gider-minimize");
+  const helpButton = $("#ajans-gider-help-toggle");
+  const editDataButton = $("#ajans-gider-edit-data");
 
   textarea.value = localStorage.getItem(STORAGE_TEXT_KEY) || "";
+
+  isDataEditorOpen = String(textarea.value || "").trim().length === 0;
+  isHelpOpen = false;
 
   makePanelDraggable(panel, handle);
   applyMinimizedState(panel, body, minimizeButton);
@@ -231,19 +315,44 @@ function registerPanelEvents(panel) {
   textarea.addEventListener("input", () => {
     localStorage.setItem(STORAGE_TEXT_KEY, textarea.value);
     setSelectedIndex(0);
+    isDataEditorOpen = true;
     syncPanelRows();
   });
 
-  select.addEventListener("change", () => {
-    setSelectedIndex(Number(select.value || 0));
-    setSelectedPaymentIndex(0);
-    syncPanelRows();
+  textarea.addEventListener("focus", () => {
+    textarea.style.borderColor = "#1f6feb";
+  });
+  textarea.addEventListener("blur", () => {
+    textarea.style.borderColor = "#e5e7eb";
+
+    if (String(textarea.value || "").trim().length > 0) {
+      isDataEditorOpen = false;
+      applyDataEditorState();
+    }
   });
 
-  paymentSelect.addEventListener("change", () => {
-    setSelectedPaymentIndex(Number(paymentSelect.value || 0));
-    syncPanelRows();
-  });
+  if (select) {
+    select.addEventListener("change", () => {
+      setSelectedIndex(Number(select.value || 0));
+      syncPanelRows();
+    });
+  }
+
+  if (helpButton) {
+    helpButton.addEventListener("click", () => {
+      isHelpOpen = !isHelpOpen;
+      applyHelpState();
+    });
+  }
+
+  if (editDataButton) {
+    editDataButton.addEventListener("click", () => {
+      isDataEditorOpen = true;
+      applyDataEditorState();
+      const ta = $("#ajans-gider-textarea");
+      if (ta) ta.focus();
+    });
+  }
 
   $("#ajans-gider-prev").addEventListener("click", () => {
     const rows = getRowsFromTextarea();
@@ -251,7 +360,6 @@ function registerPanelEvents(panel) {
 
     const current = getSelectedIndex(rows.length);
     setSelectedIndex(Math.max(0, current - 1));
-    setSelectedPaymentIndex(0);
     syncPanelRows();
   });
 
@@ -261,7 +369,6 @@ function registerPanelEvents(panel) {
 
     const current = getSelectedIndex(rows.length);
     setSelectedIndex(Math.min(rows.length - 1, current + 1));
-    setSelectedPaymentIndex(0);
     syncPanelRows();
   });
 
@@ -269,47 +376,9 @@ function registerPanelEvents(panel) {
     textarea.value = "";
     localStorage.removeItem(STORAGE_TEXT_KEY);
     clearSelectionState();
+    isDataEditorOpen = true;
     syncPanelRows();
     setStatus("Veri temizlendi.");
-  });
-
-  $("#ajans-gider-fill-payment").addEventListener("click", async (event) => {
-    const button = event.currentTarget;
-
-    if (isFilling) return;
-    isFilling = true;
-    setPaymentButtonLoading(button, true);
-
-    try {
-      const rows = getRowsFromTextarea();
-      if (!rows.length) throw new Error("Satır bulunamadı.");
-
-      const rowIndex = getSelectedIndex(rows.length);
-      const row = rows[rowIndex];
-      const paymentItems = parsePaymentItems(row);
-      const paymentIndex = getSelectedPaymentIndex(paymentItems.length);
-      const paymentItem = paymentItems[paymentIndex];
-
-      if (!paymentItem) throw new Error("Ödeme kalemi bulunamadı.");
-
-      setStatus(
-        `${rowIndex + 1}. kaydın ${paymentIndex + 1}. ödeme kalemi hazırlanıyor...`,
-      );
-
-      await fillPayment(paymentItem);
-
-      setStatus(
-        `${formatAmountTR(
-          paymentItem.amount,
-        )} TL ödeme forma yazıldı. Paraşüt'teki ÖDEME EKLE butonuna manuel bas.`,
-      );
-    } catch (err) {
-      console.error("[AJANS] Ödeme doldurma hatası:", err);
-      setStatus(err.message || String(err), true);
-    } finally {
-      isFilling = false;
-      setPaymentButtonLoading(button, false);
-    }
   });
 
   $("#ajans-gider-fill").addEventListener("click", async (event) => {

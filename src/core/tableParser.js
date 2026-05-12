@@ -11,6 +11,22 @@ function pick(obj, keys) {
   return "";
 }
 
+function inferBrandFromTitle(title) {
+  const firstToken = String(title || "")
+    .trim()
+    .split(/\s+/)[0]
+    ?.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, "");
+
+  if (!firstToken) return "";
+
+  const upper = firstToken.toLocaleUpperCase("tr-TR");
+  const hasLetter = /\p{L}/u.test(firstToken);
+
+  if (!hasLetter || firstToken !== upper) return "";
+
+  return firstToken;
+}
+
 export function parseDelimitedText(text) {
   const rows = [];
   let row = [];
@@ -72,6 +88,9 @@ export function parseTable(text) {
       "toplam_tutar",
       "toplam",
       "tutar",
+      "kalem_tutari",
+      "gider_tutari",
+      "ana_gider_tutari",
       "kisi",
       "tedarikci",
       "kayit_ismi",
@@ -87,17 +106,25 @@ export function parseTable(text) {
     ].includes(key),
   );
 
+  const usesFourColumnExpenseFormat = !hasHeader && rows[0]?.length === 4;
+  const usesFiveColumnExpenseFormat = !hasHeader && rows[0]?.length === 5;
+  const usesShortBrandInference =
+    usesFourColumnExpenseFormat || usesFiveColumnExpenseFormat;
   const headers = hasHeader
     ? rows.shift().map(keyify)
-    : [
-        "toplam_tutar",
-        "kisi",
-        "kayit_ismi",
-        "marka",
-        "fis_fatura_tarihi",
-        "odenecegi_tarih",
-        "etiket",
-      ];
+    : usesFourColumnExpenseFormat
+      ? ["kisi", "marka", "kalem_tutari", "kayit_ismi"]
+      : usesFiveColumnExpenseFormat
+        ? ["kisi", "marka", "grup_toplam", "kalem_tutari", "kayit_ismi"]
+        : [
+            "toplam_tutar",
+            "kisi",
+            "kayit_ismi",
+            "marka",
+            "fis_fatura_tarihi",
+            "odenecegi_tarih",
+            "etiket",
+          ];
 
   return rows
     .map((cols) => {
@@ -107,7 +134,15 @@ export function parseTable(text) {
         raw[h] = cols[i] || "";
       });
 
-      const amount = pick(raw, ["toplam_tutar", "toplam", "tutar", "amount"]);
+      const amount = pick(raw, [
+        "kalem_tutari",
+        "gider_tutari",
+        "ana_gider_tutari",
+        "tutar",
+        "toplam_tutar",
+        "toplam",
+        "amount",
+      ]);
       const supplier = pick(raw, ["kisi", "tedarikci", "tedarikci_adi"]);
 
       const title = pick(raw, [
@@ -120,7 +155,11 @@ export function parseTable(text) {
         "proje",
       ]);
 
-      const brand = pick(raw, ["marka", "kategori", "gider_kategorisi"]);
+      const rawBrand = pick(raw, ["marka", "kategori", "gider_kategorisi"]);
+      const inferredBrand = usesShortBrandInference
+        ? inferBrandFromTitle(title)
+        : "";
+      const brand = inferredBrand || rawBrand;
       const tag = pick(raw, ["etiket", "tag"]);
 
       const issueDateRaw = pick(raw, [
@@ -136,6 +175,7 @@ export function parseTable(text) {
         supplier,
         title,
         brand,
+        rawBrand,
         tag,
         issueDate: parseDate(issueDateRaw) || new Date(),
         dueDate: parseDate(dueDateRaw) || nextPaymentDate(),
