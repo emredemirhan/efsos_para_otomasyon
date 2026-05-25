@@ -97,14 +97,6 @@
     }
     return "";
   }
-  function inferBrandFromTitle(title) {
-    const firstToken = String(title || "").trim().split(/\s+/)[0]?.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, "");
-    if (!firstToken) return "";
-    const upper = firstToken.toLocaleUpperCase("tr-TR");
-    const hasLetter = /\p{L}/u.test(firstToken);
-    if (!hasLetter || firstToken !== upper) return "";
-    return firstToken;
-  }
   function parseDelimitedText(text) {
     const rows = [];
     let row = [];
@@ -171,7 +163,6 @@
     );
     const usesFourColumnExpenseFormat = !hasHeader && rows[0]?.length === 4;
     const usesFiveColumnExpenseFormat = !hasHeader && rows[0]?.length === 5;
-    const usesShortBrandInference = usesFourColumnExpenseFormat || usesFiveColumnExpenseFormat;
     const headers = hasHeader ? rows.shift().map(keyify) : usesFourColumnExpenseFormat ? ["kisi", "marka", "kalem_tutari", "kayit_ismi"] : usesFiveColumnExpenseFormat ? ["kisi", "marka", "grup_toplam", "kalem_tutari", "kayit_ismi"] : [
       "toplam_tutar",
       "kisi",
@@ -205,9 +196,7 @@
         "is_adi",
         "proje"
       ]);
-      const rawBrand = pick(raw, ["marka", "kategori", "gider_kategorisi"]);
-      const inferredBrand = usesShortBrandInference ? inferBrandFromTitle(title) : "";
-      const brand = inferredBrand || rawBrand;
+      const brand = pick(raw, ["marka", "kategori", "gider_kategorisi"]);
       const tag = pick(raw, ["etiket", "tag"]);
       const issueDateRaw = pick(raw, [
         "fis_fatura_tarihi",
@@ -220,7 +209,7 @@
         supplier,
         title,
         brand,
-        rawBrand,
+        rawBrand: brand,
         tag,
         issueDate: parseDate(issueDateRaw) || /* @__PURE__ */ new Date(),
         dueDate: parseDate(dueDateRaw) || nextPaymentDate()

@@ -11,22 +11,6 @@ function pick(obj, keys) {
   return "";
 }
 
-function inferBrandFromTitle(title) {
-  const firstToken = String(title || "")
-    .trim()
-    .split(/\s+/)[0]
-    ?.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, "");
-
-  if (!firstToken) return "";
-
-  const upper = firstToken.toLocaleUpperCase("tr-TR");
-  const hasLetter = /\p{L}/u.test(firstToken);
-
-  if (!hasLetter || firstToken !== upper) return "";
-
-  return firstToken;
-}
-
 export function parseDelimitedText(text) {
   const rows = [];
   let row = [];
@@ -108,8 +92,6 @@ export function parseTable(text) {
 
   const usesFourColumnExpenseFormat = !hasHeader && rows[0]?.length === 4;
   const usesFiveColumnExpenseFormat = !hasHeader && rows[0]?.length === 5;
-  const usesShortBrandInference =
-    usesFourColumnExpenseFormat || usesFiveColumnExpenseFormat;
   const headers = hasHeader
     ? rows.shift().map(keyify)
     : usesFourColumnExpenseFormat
@@ -155,11 +137,7 @@ export function parseTable(text) {
         "proje",
       ]);
 
-      const rawBrand = pick(raw, ["marka", "kategori", "gider_kategorisi"]);
-      const inferredBrand = usesShortBrandInference
-        ? inferBrandFromTitle(title)
-        : "";
-      const brand = inferredBrand || rawBrand;
+      const brand = pick(raw, ["marka", "kategori", "gider_kategorisi"]);
       const tag = pick(raw, ["etiket", "tag"]);
 
       const issueDateRaw = pick(raw, [
@@ -175,7 +153,7 @@ export function parseTable(text) {
         supplier,
         title,
         brand,
-        rawBrand,
+        rawBrand: brand,
         tag,
         issueDate: parseDate(issueDateRaw) || new Date(),
         dueDate: parseDate(dueDateRaw) || nextPaymentDate(),

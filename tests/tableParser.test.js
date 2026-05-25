@@ -36,10 +36,21 @@ test("parseTable reads the four-column Excel format as expense rows", () => {
   assert.equal(rows[1].amount, "4.000,00");
   assert.equal(rows[1].title, "GSK DİJM DERMA PORTFÖY GIF ANİMASYON");
   assert.equal(parseAmount(rows[1].amount), 4000);
-  assert.equal(rows[3].brand, "AZ");
+  assert.equal(rows[3].brand, "GSK");
   assert.equal(rows[3].rawBrand, "GSK");
-  assert.equal(rows[4].brand, "TAKEDA");
+  assert.equal(rows[4].brand, "");
   assert.equal(rows[4].rawBrand, "");
+});
+
+test("parseTable does not infer category from the description column", () => {
+  const rows = parseTable(
+    "MERTCAN ATİK\tGSK\t10.000,00\t4.000,00\tAZ MEME KANSERİ KONKUR GİF ANİMASYON",
+  );
+
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].brand, "GSK");
+  assert.equal(rows[0].rawBrand, "GSK");
+  assert.equal(rows[0].title, "AZ MEME KANSERİ KONKUR GİF ANİMASYON");
 });
 
 test("parseTable still parses the legacy five-column Excel format", () => {
