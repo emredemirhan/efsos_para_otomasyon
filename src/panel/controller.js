@@ -1,6 +1,6 @@
 import { PANEL_ID, STORAGE_TEXT_KEY } from "../config/constants.js";
 import { formatAmountTR, formatDateTR } from "../core/format.js";
-import { parseTable } from "../core/tableParser.js";
+import { inspectTableParse, parseTable } from "../core/tableParser.js";
 import { fillExpense } from "../parasut/expenseFlow.js";
 import { $ } from "../parasut/dom.js";
 import { removeDuplicatePanels } from "../parasut/frame.js";
@@ -22,6 +22,7 @@ import {
 
 let isFilling = false;
 let lastDecisionLogKey = "";
+let lastParseDebugKey = "";
 let isDataEditorOpen = true;
 let isHelpOpen = false;
 
@@ -47,6 +48,96 @@ function appendDebugLog(event, details = {}) {
   } catch (err) {
     console.warn("[AJANS][debug] Log kaydedilemedi:", err);
   }
+}
+
+function getTextareaDebugSnapshot(text) {
+  const value = String(text || "");
+  const parse = inspectTableParse(value);
+
+  return {
+    ...parse,
+    storageTextLength: String(localStorage.getItem(STORAGE_TEXT_KEY) || "").length,
+    textareaExists: Boolean($("#ajans-gider-textarea")),
+  };
+}
+
+function installDebugHelpers() {
+  window.ajansGiderParseDebug = (text = null) => {
+    const textarea = $("#ajans-gider-textarea");
+    const value = text === null ? textarea?.value || "" : text;
+    const snapshot = getTextareaDebugSnapshot(value);
+
+    console.info("[AJANS][parse-debug]", snapshot);
+
+    if (snapshot.acceptedPreview.length) {
+      console.table(
+        snapshot.acceptedPreview.map((item) => ({
+          row: item.rowNumber,
+          cols: item.columnCount,
+          supplier: item.parsed.supplier,
+          category: item.parsed.brand,
+          amount: item.parsed.amount,
+          amountNumber: item.amountNumber,
+          title: item.parsed.title,
+        })),
+      );
+    }
+
+    if (snapshot.rejectedPreview.length) {
+      console.table(
+        snapshot.rejectedPreview.map((item) => ({
+          row: item.rowNumber,
+          reason: item.reason,
+          cols: item.columnCount,
+          firstColumn: item.columns[0],
+          parsedAmount: item.parsed.amount,
+          amountNumber: item.amountNumber,
+        })),
+      );
+    }
+
+    return snapshot;
+  };
+
+  window.ajansGiderTextareaValue = () =>
+    $("#ajans-gider-textarea")?.value || "";
+}
+
+function logParseSnapshot(source, text, options = {}) {
+  const snapshot = getTextareaDebugSnapshot(text);
+  const key = [
+    source,
+    snapshot.textLength,
+    snapshot.tabCount,
+    snapshot.parsedPhysicalRows,
+    snapshot.acceptedCount,
+    snapshot.rejectedCount,
+    snapshot.detectedFormat,
+  ].join("|");
+
+  if (!options.force && key === lastParseDebugKey) return snapshot;
+  lastParseDebugKey = key;
+
+  appendDebugLog(`parse-${source}`, {
+    textLength: snapshot.textLength,
+    trimmedLength: snapshot.trimmedLength,
+    tabCount: snapshot.tabCount,
+    parsedPhysicalRows: snapshot.parsedPhysicalRows,
+    firstRowColumnCount: snapshot.firstRowColumnCount,
+    detectedFormat: snapshot.detectedFormat,
+    acceptedCount: snapshot.acceptedCount,
+    rejectedCount: snapshot.rejectedCount,
+    firstRow: snapshot.firstRow,
+    headers: snapshot.headers,
+    rejectedPreview: snapshot.rejectedPreview,
+    textPreview: snapshot.textPreview,
+  });
+
+  if (snapshot.textLength > 0 && snapshot.acceptedCount === 0) {
+    console.warn("[AJANS][parse-debug] Veri var ama parse edilen satır yok.", snapshot);
+  }
+
+  return snapshot;
 }
 
 function getRowsFromTextarea() {
@@ -246,6 +337,10 @@ function syncPanelRows() {
     parseError = err;
   }
 
+  if (parseError || (String(textarea.value || "").trim() && !rows.length)) {
+    logParseSnapshot("sync-empty", textarea.value);
+  }
+
   if (select) {
     select.innerHTML = "";
     if (rows.length) {
@@ -305,6 +400,7 @@ function registerPanelEvents(panel) {
   const editDataButton = $("#ajans-gider-edit-data");
 
   textarea.value = localStorage.getItem(STORAGE_TEXT_KEY) || "";
+  installDebugHelpers();
 
   isDataEditorOpen = String(textarea.value || "").trim().length === 0;
   isHelpOpen = false;
@@ -312,10 +408,32 @@ function registerPanelEvents(panel) {
   makePanelDraggable(panel, handle);
   applyMinimizedState(panel, body, minimizeButton);
 
+  textarea.addEventListener("paste", (event) => {
+    const pastedText = event.clipboardData?.getData("text/plain") || "";
+    const htmlText = event.clipboardData?.getData("text/html") || "";
+    const clipboardTypes = Array.from(event.clipboardData?.types || []);
+
+    appendDebugLog("textarea-paste", {
+      clipboardTypes,
+      pastedTextLength: pastedText.length,
+      pastedHtmlLength: htmlText.length,
+      pastedTabCount: (pastedText.match(/\t/g) || []).length,
+      pastedLineCount: pastedText
+        ? pastedText.replace(/\r\n/g, "\n").split("\n").length
+        : 0,
+      pastedPreview: pastedText.slice(0, 500),
+    });
+
+    window.setTimeout(() => {
+      logParseSnapshot("paste-after-input", textarea.value, { force: true });
+    }, 0);
+  });
+
   textarea.addEventListener("input", () => {
     localStorage.setItem(STORAGE_TEXT_KEY, textarea.value);
     setSelectedIndex(0);
     isDataEditorOpen = true;
+    logParseSnapshot("input", textarea.value, { force: true });
     syncPanelRows();
   });
 

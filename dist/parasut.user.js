@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Parasut Gider Formu Excel Doldurucu
 // @namespace    ajans-parasut
-// @version      1.2.15
+// @version      1.2.16
 // @description  Excel satırlarından seçilen kaydı Paraşüt gider formuna manuel doldurur
 // @match        https://uygulama.parasut.com/*
 // @exclude      https://uygulama.parasut.com/*render_trinity_iframe=true*
@@ -89,12 +89,136 @@
   }
 
   // src/core/tableParser.js
+  var HEADER_KEYS = [
+    "toplam_tutar",
+    "toplam",
+    "tutar",
+    "kalem_tutari",
+    "gider_tutari",
+    "ana_gider_tutari",
+    "kisi",
+    "tedarikci",
+    "kayit_ismi",
+    "aciklama",
+    "kalem",
+    "kalemler",
+    "marka",
+    "kategori",
+    "gider_kategorisi",
+    "fis_fatura_tarihi",
+    "fatura_tarihi",
+    "odenecegi_tarih",
+    "odeme_tarihi",
+    "etiket"
+  ];
   function pick(obj, keys) {
     for (const key of keys) {
       if (obj[key] !== void 0 && String(obj[key]).trim() !== "") {
         return obj[key];
       }
     }
+    return "";
+  }
+  function detectFormat(rows, mutateRows = false) {
+    if (!rows.length) {
+      return {
+        headers: [],
+        firstRowKeys: [],
+        hasHeader: false,
+        detectedFormat: "empty"
+      };
+    }
+    const firstRowKeys = rows[0].map(keyify);
+    const hasHeader = firstRowKeys.some((key) => HEADER_KEYS.includes(key));
+    if (hasHeader) {
+      const headerRow = mutateRows ? rows.shift() : rows[0];
+      return {
+        headers: headerRow.map(keyify),
+        firstRowKeys,
+        hasHeader: true,
+        detectedFormat: "header"
+      };
+    }
+    if (rows[0]?.length === 4) {
+      return {
+        headers: ["kisi", "marka", "kalem_tutari", "kayit_ismi"],
+        firstRowKeys,
+        hasHeader: false,
+        detectedFormat: "four-column-expense"
+      };
+    }
+    if (rows[0]?.length === 5) {
+      return {
+        headers: ["kisi", "marka", "grup_toplam", "kalem_tutari", "kayit_ismi"],
+        firstRowKeys,
+        hasHeader: false,
+        detectedFormat: "five-column-expense"
+      };
+    }
+    return {
+      headers: [
+        "toplam_tutar",
+        "kisi",
+        "kayit_ismi",
+        "marka",
+        "fis_fatura_tarihi",
+        "odenecegi_tarih",
+        "etiket"
+      ],
+      firstRowKeys,
+      hasHeader: false,
+      detectedFormat: "legacy-default"
+    };
+  }
+  function parseRawRow(cols, headers) {
+    const raw = {};
+    headers.forEach((h, i) => {
+      raw[h] = cols[i] || "";
+    });
+    const amount = pick(raw, [
+      "kalem_tutari",
+      "gider_tutari",
+      "ana_gider_tutari",
+      "tutar",
+      "toplam_tutar",
+      "toplam",
+      "amount"
+    ]);
+    const supplier = pick(raw, ["kisi", "tedarikci", "tedarikci_adi"]);
+    const title = pick(raw, [
+      "kayit_ismi",
+      "kayit",
+      "aciklama",
+      "kalem",
+      "kalemler",
+      "is_adi",
+      "proje"
+    ]);
+    const brand = pick(raw, ["marka", "kategori", "gider_kategorisi"]);
+    const tag = pick(raw, ["etiket", "tag"]);
+    const issueDateRaw = pick(raw, [
+      "fis_fatura_tarihi",
+      "fatura_tarihi",
+      "tarih"
+    ]);
+    const dueDateRaw = pick(raw, ["odenecegi_tarih", "odeme_tarihi"]);
+    return {
+      raw,
+      row: {
+        amount,
+        supplier,
+        title,
+        brand,
+        rawBrand: brand,
+        tag,
+        issueDate: parseDate(issueDateRaw) || /* @__PURE__ */ new Date(),
+        dueDate: parseDate(dueDateRaw) || nextPaymentDate()
+      }
+    };
+  }
+  function getRejectedReason(row) {
+    if (!parseAmount(row.amount)) return "amount-empty-or-zero";
+    if (!row.supplier && !row.title && !row.brand) return "missing-row-identity";
     return "";
   }
   function parseDelimitedText(text) {
@@ -138,88 +262,59 @@
   function parseTable(text) {
     const rows = parseDelimitedText(text);
     if (!rows.length) return [];
-    const firstRowKeys = rows[0].map(keyify);
-    const hasHeader = firstRowKeys.some(
-      (key) => [
-        "toplam_tutar",
-        "toplam",
-        "tutar",
-        "kalem_tutari",
-        "gider_tutari",
-        "ana_gider_tutari",
-        "kisi",
-        "tedarikci",
-        "kayit_ismi",
-        "aciklama",
-        "kalem",
-        "kalemler",
-        "marka",
-        "fis_fatura_tarihi",
-        "fatura_tarihi",
-        "odenecegi_tarih",
-        "odeme_tarihi",
-        "etiket"
-      ].includes(key)
-    );
-    const usesFourColumnExpenseFormat = !hasHeader && rows[0]?.length === 4;
-    const usesFiveColumnExpenseFormat = !hasHeader && rows[0]?.length === 5;
-    const headers = hasHeader ? rows.shift().map(keyify) : usesFourColumnExpenseFormat ? ["kisi", "marka", "kalem_tutari", "kayit_ismi"] : usesFiveColumnExpenseFormat ? ["kisi", "marka", "grup_toplam", "kalem_tutari", "kayit_ismi"] : [
-      "toplam_tutar",
-      "kisi",
-      "kayit_ismi",
-      "marka",
-      "fis_fatura_tarihi",
-      "odenecegi_tarih",
-      "etiket"
-    ];
-    return rows.map((cols) => {
-      const raw = {};
-      headers.forEach((h, i) => {
-        raw[h] = cols[i] || "";
-      });
-      const amount = pick(raw, [
-        "kalem_tutari",
-        "gider_tutari",
-        "ana_gider_tutari",
-        "tutar",
-        "toplam_tutar",
-        "toplam",
-        "amount"
-      ]);
-      const supplier = pick(raw, ["kisi", "tedarikci", "tedarikci_adi"]);
-      const title = pick(raw, [
-        "kayit_ismi",
-        "kayit",
-        "aciklama",
-        "kalem",
-        "kalemler",
-        "is_adi",
-        "proje"
-      ]);
-      const brand = pick(raw, ["marka", "kategori", "gider_kategorisi"]);
-      const tag = pick(raw, ["etiket", "tag"]);
-      const issueDateRaw = pick(raw, [
-        "fis_fatura_tarihi",
-        "fatura_tarihi",
-        "tarih"
-      ]);
-      const dueDateRaw = pick(raw, ["odenecegi_tarih", "odeme_tarihi"]);
-      return {
-        amount,
-        supplier,
-        title,
-        brand,
-        rawBrand: brand,
-        tag,
-        issueDate: parseDate(issueDateRaw) || /* @__PURE__ */ new Date(),
-        dueDate: parseDate(dueDateRaw) || nextPaymentDate()
+    const { headers } = detectFormat(rows, true);
+    return rows.map((cols) => parseRawRow(cols, headers).row).filter((row) => !getRejectedReason(row));
+  }
+  function inspectTableParse(text) {
+    const source = String(text || "");
+    const rows = parseDelimitedText(source);
+    const format = detectFormat([...rows]);
+    const dataRows = format.hasHeader ? rows.slice(1) : rows;
+    const accepted = [];
+    const rejected = [];
+    dataRows.forEach((cols, index) => {
+      const parsed = parseRawRow(cols, format.headers);
+      const reason = getRejectedReason(parsed.row);
+      const item = {
+        rowNumber: format.hasHeader ? index + 2 : index + 1,
+        columnCount: cols.length,
+        columns: cols,
+        raw: parsed.raw,
+        parsed: {
+          supplier: parsed.row.supplier,
+          brand: parsed.row.brand,
+          amount: parsed.row.amount,
+          title: parsed.row.title,
+          tag: parsed.row.tag
+        },
+        amountNumber: parseAmount(parsed.row.amount)
       };
-    }).filter((row) => {
-      const amountNumber = parseAmount(row.amount);
-      if (!amountNumber) return false;
-      if (!row.supplier && !row.title && !row.brand) return false;
-      return true;
+      if (reason) {
+        rejected.push({ ...item, reason });
+      } else {
+        accepted.push(item);
+      }
     });
+    return {
+      textLength: source.length,
+      trimmedLength: source.trim().length,
+      lineCount: source ? source.replace(/\r\n/g, "\n").split("\n").length : 0,
+      tabCount: (source.match(/\t/g) || []).length,
+      semicolonCount: (source.match(/;/g) || []).length,
+      commaCount: (source.match(/,/g) || []).length,
+      parsedPhysicalRows: rows.length,
+      firstRowColumnCount: rows[0]?.length || 0,
+      firstRow: rows[0] || [],
+      firstRowKeys: format.firstRowKeys,
+      hasHeader: format.hasHeader,
+      detectedFormat: format.detectedFormat,
+      headers: format.headers,
+      acceptedCount: accepted.length,
+      rejectedCount: rejected.length,
+      acceptedPreview: accepted.slice(0, 5),
+      rejectedPreview: rejected.slice(0, 10),
+      textPreview: source.slice(0, 500)
+    };
   }
 
   // src/parasut/dom.js
@@ -1395,6 +1490,7 @@
   // src/panel/controller.js
   var isFilling = false;
   var lastDecisionLogKey = "";
+  var lastParseDebugKey = "";
   var isDataEditorOpen = true;
   var isHelpOpen = false;
   function appendDebugLog(event, details = {}) {
@@ -1417,6 +1513,82 @@
     } catch (err) {
       console.warn("[AJANS][debug] Log kaydedilemedi:", err);
     }
+  }
+  function getTextareaDebugSnapshot(text) {
+    const value = String(text || "");
+    const parse = inspectTableParse(value);
+    return {
+      ...parse,
+      storageTextLength: String(localStorage.getItem(STORAGE_TEXT_KEY) || "").length,
+      textareaExists: Boolean($("#ajans-gider-textarea"))
+    };
+  }
+  function installDebugHelpers() {
+    window.ajansGiderParseDebug = (text = null) => {
+      const textarea = $("#ajans-gider-textarea");
+      const value = text === null ? textarea?.value || "" : text;
+      const snapshot = getTextareaDebugSnapshot(value);
+      console.info("[AJANS][parse-debug]", snapshot);
+      if (snapshot.acceptedPreview.length) {
+        console.table(
+          snapshot.acceptedPreview.map((item) => ({
+            row: item.rowNumber,
+            cols: item.columnCount,
+            supplier: item.parsed.supplier,
+            category: item.parsed.brand,
+            amount: item.parsed.amount,
+            amountNumber: item.amountNumber,
+            title: item.parsed.title
+          }))
+        );
+      }
+      if (snapshot.rejectedPreview.length) {
+        console.table(
+          snapshot.rejectedPreview.map((item) => ({
+            row: item.rowNumber,
+            reason: item.reason,
+            cols: item.columnCount,
+            firstColumn: item.columns[0],
+            parsedAmount: item.parsed.amount,
+            amountNumber: item.amountNumber
+          }))
+        );
+      }
+      return snapshot;
+    };
+    window.ajansGiderTextareaValue = () => $("#ajans-gider-textarea")?.value || "";
+  }
+  function logParseSnapshot(source, text, options = {}) {
+    const snapshot = getTextareaDebugSnapshot(text);
+    const key = [
+      source,
+      snapshot.textLength,
+      snapshot.tabCount,
+      snapshot.parsedPhysicalRows,
+      snapshot.acceptedCount,
+      snapshot.rejectedCount,
+      snapshot.detectedFormat
+    ].join("|");
+    if (!options.force && key === lastParseDebugKey) return snapshot;
+    lastParseDebugKey = key;
+    appendDebugLog(`parse-${source}`, {
+      textLength: snapshot.textLength,
+      trimmedLength: snapshot.trimmedLength,
+      tabCount: snapshot.tabCount,
+      parsedPhysicalRows: snapshot.parsedPhysicalRows,
+      firstRowColumnCount: snapshot.firstRowColumnCount,
+      detectedFormat: snapshot.detectedFormat,
+      acceptedCount: snapshot.acceptedCount,
+      rejectedCount: snapshot.rejectedCount,
+      firstRow: snapshot.firstRow,
+      headers: snapshot.headers,
+      rejectedPreview: snapshot.rejectedPreview,
+      textPreview: snapshot.textPreview
+    });
+    if (snapshot.textLength > 0 && snapshot.acceptedCount === 0) {
+      console.warn("[AJANS][parse-debug] Veri var ama parse edilen sat\u0131r yok.", snapshot);
+    }
+    return snapshot;
   }
   function getRowsFromTextarea() {
     const textarea = $("#ajans-gider-textarea");
@@ -1575,6 +1747,9 @@
     } catch (err) {
       parseError = err;
     }
+    if (parseError || String(textarea.value || "").trim() && !rows.length) {
+      logParseSnapshot("sync-empty", textarea.value);
+    }
     if (select) {
       select.innerHTML = "";
       if (rows.length) {
@@ -1623,14 +1798,32 @@
     const helpButton = $("#ajans-gider-help-toggle");
     const editDataButton = $("#ajans-gider-edit-data");
     textarea.value = localStorage.getItem(STORAGE_TEXT_KEY) || "";
+    installDebugHelpers();
     isDataEditorOpen = String(textarea.value || "").trim().length === 0;
     isHelpOpen = false;
     makePanelDraggable(panel, handle);
     applyMinimizedState(panel, body, minimizeButton);
+    textarea.addEventListener("paste", (event) => {
+      const pastedText = event.clipboardData?.getData("text/plain") || "";
+      const htmlText = event.clipboardData?.getData("text/html") || "";
+      const clipboardTypes = Array.from(event.clipboardData?.types || []);
+      appendDebugLog("textarea-paste", {
+        clipboardTypes,
+        pastedTextLength: pastedText.length,
+        pastedHtmlLength: htmlText.length,
+        pastedTabCount: (pastedText.match(/\t/g) || []).length,
+        pastedLineCount: pastedText ? pastedText.replace(/\r\n/g, "\n").split("\n").length : 0,
+        pastedPreview: pastedText.slice(0, 500)
+      });
+      window.setTimeout(() => {
+        logParseSnapshot("paste-after-input", textarea.value, { force: true });
+      }, 0);
+    });
     textarea.addEventListener("input", () => {
       localStorage.setItem(STORAGE_TEXT_KEY, textarea.value);
       setSelectedIndex(0);
       isDataEditorOpen = true;
+      logParseSnapshot("input", textarea.value, { force: true });
       syncPanelRows();
     });
     textarea.addEventListener("focus", () => {
