@@ -1447,7 +1447,7 @@
 
   // src/panel/panelState.js
   var { ACCENT: ACCENT3, ACCENT_DARK: ACCENT_DARK2, MUTED: MUTED3 } = PANEL_COLORS;
-  function setStatus(message, isError = false) {
+  function setStatus(message, tone = "info") {
     const wrapper = $("#ajans-gider-status-wrapper");
     const status = $("#ajans-gider-status");
     const icon = $("#ajans-gider-status-icon");
@@ -1460,10 +1460,23 @@
     }
     wrapper.hidden = false;
     status.textContent = text;
-    if (isError) {
+    const statusTone = tone === true ? "error" : tone;
+    wrapper.style.background = "transparent";
+    wrapper.style.border = "0";
+    wrapper.style.borderRadius = "0";
+    wrapper.style.padding = "0";
+    if (statusTone === "error") {
       icon.textContent = "!";
       icon.style.color = "#b42318";
       status.style.color = "#b42318";
+    } else if (statusTone === "success") {
+      wrapper.style.background = "#ecfdf3";
+      wrapper.style.border = "1px solid #abefc6";
+      wrapper.style.borderRadius = "8px";
+      wrapper.style.padding = "8px 10px";
+      icon.textContent = "OK";
+      icon.style.color = "#067647";
+      status.style.color = "#067647";
     } else {
       icon.textContent = "\xB7";
       icon.style.color = MUTED3;
@@ -1597,6 +1610,12 @@
   }
   function getCurrentFlow() {
     return getPageDetectionSnapshot().flow;
+  }
+  function advanceSelectionAfterSuccessfulFill(currentIndex, rowsLength) {
+    if (currentIndex >= rowsLength - 1) return false;
+    setSelectedIndex(currentIndex + 1);
+    syncPanelRows();
+    return true;
   }
   function updateFlowVisibility(flow = getCurrentFlow()) {
     const expenseActions = $("#ajans-gider-expense-actions");
@@ -1890,7 +1909,12 @@
         const row = rows[index];
         setStatus(`${index + 1}. kay\u0131t dolduruluyor...`);
         await fillExpense(row);
-        setStatus(`${index + 1}. kay\u0131t forma dolduruldu. Kaydetme i\u015Flemini manuel yap.`);
+        const advanced = advanceSelectionAfterSuccessfulFill(index, rows.length);
+        const nextMessage = advanced ? ` ${index + 2}. kayda ge\xE7ildi.` : " Son kay\u0131ttas\u0131n.";
+        setStatus(
+          `DOLDURMA BA\u015EARILI. ${index + 1}. kay\u0131t forma dolduruldu.${nextMessage} Kaydetme i\u015Flemini manuel yap.`,
+          "success"
+        );
       } catch (err) {
         console.error("[AJANS] Doldurma hatas\u0131:", err);
         setStatus(err.message || String(err), true);

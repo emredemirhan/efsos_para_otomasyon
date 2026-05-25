@@ -4,7 +4,7 @@ import { PANEL_COLORS } from "./panelTheme.js";
 
 const { ACCENT, ACCENT_DARK, MUTED } = PANEL_COLORS;
 
-export function setStatus(message, isError = false) {
+export function setStatus(message, tone = "info") {
   const wrapper = $("#ajans-gider-status-wrapper");
   const status = $("#ajans-gider-status");
   const icon = $("#ajans-gider-status-icon");
@@ -22,10 +22,25 @@ export function setStatus(message, isError = false) {
   wrapper.hidden = false;
   status.textContent = text;
 
-  if (isError) {
+  const statusTone = tone === true ? "error" : tone;
+
+  wrapper.style.background = "transparent";
+  wrapper.style.border = "0";
+  wrapper.style.borderRadius = "0";
+  wrapper.style.padding = "0";
+
+  if (statusTone === "error") {
     icon.textContent = "!";
     icon.style.color = "#b42318";
     status.style.color = "#b42318";
+  } else if (statusTone === "success") {
+    wrapper.style.background = "#ecfdf3";
+    wrapper.style.border = "1px solid #abefc6";
+    wrapper.style.borderRadius = "8px";
+    wrapper.style.padding = "8px 10px";
+    icon.textContent = "OK";
+    icon.style.color = "#067647";
+    status.style.color = "#067647";
   } else {
     icon.textContent = "·";
     icon.style.color = MUTED;

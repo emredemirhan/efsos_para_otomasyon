@@ -151,6 +151,14 @@ function getCurrentFlow() {
   return getPageDetectionSnapshot().flow;
 }
 
+function advanceSelectionAfterSuccessfulFill(currentIndex, rowsLength) {
+  if (currentIndex >= rowsLength - 1) return false;
+
+  setSelectedIndex(currentIndex + 1);
+  syncPanelRows();
+  return true;
+}
+
 function updateFlowVisibility(flow = getCurrentFlow()) {
   const expenseActions = $("#ajans-gider-expense-actions");
 
@@ -517,7 +525,15 @@ function registerPanelEvents(panel) {
 
       await fillExpense(row);
 
-      setStatus(`${index + 1}. kayıt forma dolduruldu. Kaydetme işlemini manuel yap.`);
+      const advanced = advanceSelectionAfterSuccessfulFill(index, rows.length);
+      const nextMessage = advanced
+        ? ` ${index + 2}. kayda geçildi.`
+        : " Son kayıttasın.";
+
+      setStatus(
+        `DOLDURMA BAŞARILI. ${index + 1}. kayıt forma dolduruldu.${nextMessage} Kaydetme işlemini manuel yap.`,
+        "success",
+      );
     } catch (err) {
       console.error("[AJANS] Doldurma hatası:", err);
       setStatus(err.message || String(err), true);
