@@ -12,7 +12,20 @@ Arkadaşına kurulum için şu linki gönder:
 https://raw.githubusercontent.com/emredemirhan/efsos_para_otomasyon/main/dist/parasut.user.js
 ```
 
+Kurulum adımları:
+
+1. Chrome'a Tampermonkey eklentisini kur.
+2. Yukarıdaki linki Chrome'da aç.
+3. Tampermonkey kurulum ekranı açılınca `Install` / `Yükle` butonuna bas.
+4. Paraşüt'e girip yeni gider formunu aç.
+5. Panel otomatik görünür; Excel satırlarını panele yapıştırıp `Ana Gideri Doldur` ile kullan.
+
 Bu link açıldığında Tampermonkey kurulum ekranı gelir. Güncelleme yayınlamak için sürümü artırıp tekrar build alarak aynı repo'ya pushlamak yeterlidir.
+
+Yeni kullanıcıya son geliştirme halini kurdurmak için değişikliklerin GitHub'daki
+`main` branch'ine pushlanmış olması gerekir. Kurulum linki her zaman
+`main/dist/parasut.user.js` dosyasını indirir; localde kalmış değişiklikler
+karşı tarafa gitmez.
 
 ## Otomatik Yayınlama
 
