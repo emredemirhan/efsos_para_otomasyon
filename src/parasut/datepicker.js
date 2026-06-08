@@ -170,6 +170,45 @@ export async function setPikadayDate(pikaSingle, date) {
   return true;
 }
 
+export async function setLegacyPikadayDate(pikaSingle, date) {
+  if (!pikaSingle || !date) return false;
+
+  const targetYear = date.getFullYear();
+  const targetMonth = date.getMonth();
+  const targetDay = date.getDate();
+
+  const yearSelect = pikaSingle.querySelector("select.pika-select-year");
+  const monthSelect = pikaSingle.querySelector("select.pika-select-month");
+
+  const yearChanged = setSelectValue(yearSelect, targetYear);
+  const monthChanged = setSelectValue(monthSelect, targetMonth);
+
+  if (yearChanged || monthChanged) await sleep(350);
+
+  const dayButton = await waitFor(() => {
+    const cell = $$("td[data-day]", pikaSingle).find(
+      (td) =>
+        !td.classList.contains("is-empty") &&
+        Number(td.getAttribute("data-day")) === targetDay &&
+        td.querySelector("button.pika-button"),
+    );
+
+    return cell ? cell.querySelector("button.pika-button") : null;
+  }, 2500).catch(() => null);
+
+  if (!dayButton) {
+    console.warn(
+      "[AJANS] Eski pikaday gün butonu bulunamadı:",
+      formatDateTR(date),
+    );
+    return false;
+  }
+
+  dayButton.click();
+  await sleep(250);
+  return true;
+}
+
 async function openBoundPikaday(input) {
   if (!input) return null;
 

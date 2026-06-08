@@ -17,3 +17,12 @@ test("parseDate handles Excel, TR, and ISO dates", () => {
   assert.equal(formatDateTR(parseDate("2026-05-01")), "01.05.2026");
   assert.equal(formatDateTR(parseDate("45000")), "15.03.2023");
 });
+
+test("parseDate reads slash and compact dates as Turkish day/month dates", () => {
+  const currentYear = new Date().getFullYear();
+
+  assert.equal(formatDateTR(parseDate("06/05/2026")), "06.05.2026");
+  assert.equal(formatDateTR(parseDate("6/5/26")), "06.05.2026");
+  assert.equal(formatDateTR(parseDate("06/05")), `06.05.${currentYear}`);
+  assert.equal(formatDateTR(parseDate("0605-2026")), "06.05.2026");
+});

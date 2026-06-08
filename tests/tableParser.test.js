@@ -1,7 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { parseAmount } from "../src/core/format.js";
-import { inspectTableParse, parseTable } from "../src/core/tableParser.js";
+import { formatDateTR, parseAmount } from "../src/core/format.js";
+import {
+  getPaymentRecords,
+  inspectTableParse,
+  parseTable,
+} from "../src/core/tableParser.js";
 
 test("parseTable reads header-based pasted Excel rows", () => {
   const rows = parseTable(
@@ -98,4 +102,85 @@ test("parseTable reads the multi-row five-column Excel paste", () => {
   assert.equal(debug.acceptedCount, 17);
   assert.equal(debug.rejectedCount, 0);
   assert.equal(debug.firstRowColumnCount, 5);
+});
+
+test("parseTable reads the seven-column expense+payment format", () => {
+  const rows = parseTable(
+    "NİL ÖZAKIN MEDİKAL\tGSK\t63.000,00\tVAKA PLATFORMU HAZIRLANMASI\t63.000,00\t05.06.2026\tZİRAAT AJANS A.Ş. TL (5004)",
+  );
+
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].supplier, "NİL ÖZAKIN MEDİKAL");
+  assert.equal(rows[0].title, "VAKA PLATFORMU HAZIRLANMASI");
+  assert.equal(rows[0].payments.length, 1);
+  assert.equal(rows[0].payments[0].amount, "63.000,00");
+  assert.equal(rows[0].payments[0].account, "ZİRAAT AJANS A.Ş. TL (5004)");
+  assert.equal(formatDateTR(rows[0].payments[0].date), "05.06.2026");
+  assert.equal(rows[0].payments[0].description, "VAKA PLATFORMU HAZIRLANMASI");
+});
+
+test("buildPayments splits multiple payments by slash and zips date/account", () => {
+  const rows = parseTable(
+    [
+      "Tedarikçi\tMarka\tKalem Tutarı\tKayıt İsmi\tÖdeme Tutarı\tÖdeme Tarihi\tÖdeme Hesabı",
+      "OYA KADAİFCİ\tGSK\t82.750,00\tZONA İNFOGRAFİK\t30.000,00 / 52.750,00\t05.06.2026 / 20.06.2026\tEV TL / GARANTİ ÖZGE TL",
+    ].join("\n"),
+  );
+
+  const [row] = rows;
+  assert.equal(row.payments.length, 2);
+  assert.equal(row.payments[0].amount, "30.000,00");
+  assert.equal(formatDateTR(row.payments[0].date), "05.06.2026");
+  assert.equal(row.payments[0].account, "EV TL");
+  assert.equal(row.payments[1].amount, "52.750,00");
+  assert.equal(formatDateTR(row.payments[1].date), "20.06.2026");
+  assert.equal(row.payments[1].account, "GARANTİ ÖZGE TL");
+});
+
+test("buildPayments applies single date/account to all amounts", () => {
+  const rows = parseTable(
+    [
+      "Tedarikçi\tMarka\tKalem Tutarı\tKayıt İsmi\tÖdeme Tutarı\tÖdeme Tarihi\tÖdeme Hesabı",
+      "OYA KADAİFCİ\tGSK\t82.750,00\tZONA İNFOGRAFİK\t30.000,00 / 52.750,00\t05.06.2026\tEV TL",
+    ].join("\n"),
+  );
+
+  const [row] = rows;
+  assert.equal(row.payments.length, 2);
+  assert.equal(formatDateTR(row.payments[0].date), "05.06.2026");
+  assert.equal(formatDateTR(row.payments[1].date), "05.06.2026");
+  assert.equal(row.payments[0].account, "EV TL");
+  assert.equal(row.payments[1].account, "EV TL");
+});
+
+test("getPaymentRecords flattens rows into one record per payment", () => {
+  const sample = [
+    "Tedarikçi\tMarka\tKalem Tutarı\tKayıt İsmi\tÖdeme Tutarı\tÖdeme Tarihi\tÖdeme Hesabı",
+    "NİL ÖZAKIN\tGSK\t63.000,00\tVAKA PLATFORMU\t63.000,00\t05.06.2026\tEV TL",
+    "OYA KADAİFCİ\tGSK\t82.750,00\tZONA İNFOGRAFİK\t30.000,00 / 52.750,00\t05.06.2026 / 20.06.2026\tEV TL / GARANTİ ÖZGE TL",
+  ].join("\n");
+
+  const records = getPaymentRecords(sample);
+
+  assert.equal(records.length, 3);
+  assert.equal(records[0].supplier, "NİL ÖZAKIN");
+  assert.equal(records[0].itemName, "VAKA PLATFORMU");
+  assert.equal(records[0].description, "VAKA PLATFORMU");
+  assert.equal(records[1].itemName, "ZONA İNFOGRAFİK");
+  assert.equal(records[1].paymentIndex, 0);
+  assert.equal(records[1].paymentCount, 2);
+  assert.equal(records[2].amount, "52.750,00");
+  assert.equal(records[2].account, "GARANTİ ÖZGE TL");
+});
+
+test("getPaymentRecords reads compact Turkish payment dates", () => {
+  const sample = [
+    "Tedarikçi\tMarka\tKalem Tutarı\tKayıt İsmi\tÖdeme Tutarı\tÖdeme Tarihi\tÖdeme Hesabı",
+    "NİL ÖZAKIN\tGSK\t63.000,00\tVAKA PLATFORMU\t63.000,00\t0605-2026\tEV TL",
+  ].join("\n");
+
+  const [record] = getPaymentRecords(sample);
+
+  assert.equal(record.dateText, "0605-2026");
+  assert.equal(formatDateTR(record.date), "06.05.2026");
 });

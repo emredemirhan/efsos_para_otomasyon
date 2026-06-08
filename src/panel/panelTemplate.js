@@ -55,7 +55,7 @@ function getPanelMarkup() {
           width:8px; height:8px; border-radius:50%;
           background:${ACCENT}; flex:0 0 auto;
         "></span>
-        <div style="font-weight:600; font-size:13px; color:${TEXT}; letter-spacing:-0.01em;">
+        <div id="ajans-gider-title-text" style="font-weight:600; font-size:13px; color:${TEXT}; letter-spacing:-0.01em;">
           Gider Doldurucu
         </div>
       </div>
@@ -96,8 +96,7 @@ function getPanelMarkup() {
         color:${MUTED};
         line-height:1.5;
       ">
-        Excel'den tüm satırları kopyalayıp aşağıya yapıştır. Sayfa değişse de veri burada kalır.<br>
-        <span style="color:${TEXT};">Sütun sırası:</span> Kişi · Marka · Tutar · Kayıt ismi
+        <span id="ajans-gider-help-content"></span>
       </div>
 
       <div id="ajans-gider-data-collapsed" hidden style="
@@ -326,6 +325,21 @@ function getPanelMarkup() {
             box-shadow: 0 1px 0 rgba(15,23,42,.05);
             letter-spacing:-0.01em;
           ">Ana Gideri Doldur</button>
+        </div>
+
+        <div id="ajans-gider-payment-actions" style="display:none;">
+          <button id="ajans-gider-pay" style="
+            padding:9px 14px;
+            background:${ACCENT};
+            color:#ffffff;
+            border:0;
+            border-radius:9px;
+            font-weight:600;
+            font-size:13px;
+            cursor:pointer;
+            box-shadow: 0 1px 0 rgba(15,23,42,.05);
+            letter-spacing:-0.01em;
+          ">Ödemeyi Başlat</button>
         </div>
       </div>
     </div>

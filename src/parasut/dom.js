@@ -57,6 +57,7 @@ export function setNativeValue(el, value, options = {}) {
   if (!el) throw new Error("Input bulunamadı.");
 
   const shouldBlur = options.blur !== false;
+  const shouldKeyup = options.keyup !== false;
   const view = el.ownerDocument?.defaultView || window;
   const wasReadonly = el.hasAttribute("readonly");
   if (wasReadonly) el.removeAttribute("readonly");
@@ -75,7 +76,9 @@ export function setNativeValue(el, value, options = {}) {
 
   el.dispatchEvent(new view.Event("input", { bubbles: true }));
   el.dispatchEvent(new view.Event("change", { bubbles: true }));
-  el.dispatchEvent(new view.KeyboardEvent("keyup", { bubbles: true }));
+  if (shouldKeyup) {
+    el.dispatchEvent(new view.KeyboardEvent("keyup", { bubbles: true }));
+  }
 
   if (shouldBlur) {
     el.dispatchEvent(new view.Event("blur", { bubbles: true }));
@@ -101,6 +104,42 @@ export function sendKey(el, key) {
   el.dispatchEvent(new view.KeyboardEvent("keydown", common));
   el.dispatchEvent(new view.KeyboardEvent("keypress", common));
   el.dispatchEvent(new view.KeyboardEvent("keyup", common));
+}
+
+export function clickWithoutDefaultNavigation(el) {
+  if (!el) return;
+
+  const doc = el.ownerDocument || document;
+  const view = doc.defaultView || window;
+
+  const preventOwnDefault = (event) => {
+    if (event.target === el || el.contains?.(event.target)) {
+      event.preventDefault();
+    }
+  };
+
+  doc.addEventListener("click", preventOwnDefault, true);
+  try {
+    el.dispatchEvent(
+      new view.MouseEvent("mousedown", {
+        bubbles: true,
+        cancelable: true,
+        view,
+        button: 0,
+      }),
+    );
+    el.dispatchEvent(
+      new view.MouseEvent("mouseup", {
+        bubbles: true,
+        cancelable: true,
+        view,
+        button: 0,
+      }),
+    );
+    el.click();
+  } finally {
+    doc.removeEventListener("click", preventOwnDefault, true);
+  }
 }
 
 export function getVisibleDropdownRoots(root = getActiveAppDocument()) {

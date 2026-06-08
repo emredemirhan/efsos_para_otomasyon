@@ -2,7 +2,7 @@
 // @name         Parasut Gider Formu Excel Doldurucu
 // @namespace    ajans-parasut
 // @version      1.2.16
-// @description  Excel satırlarından seçilen kaydı Paraşüt gider formuna manuel doldurur
+// @description  Excel satırlarından gider formunu doldurur ve tedarikçi ödemelerini yarı otomatik girer
 // @match        https://uygulama.parasut.com/*
 // @exclude      https://uygulama.parasut.com/*render_trinity_iframe=true*
 // @updateURL    https://raw.githubusercontent.com/emredemirhan/efsos_para_otomasyon/main/dist/parasut.user.js
@@ -43,22 +43,50 @@
     if (!value) return null;
     const raw = String(value).trim();
     const excelDatePattern = new RegExp("^\\d{5}$");
-    const trDatePattern = new RegExp(
-      "^(\\d{1,2})[./-](\\d{1,2})[./-](\\d{4})$"
+    const slashDatePattern = new RegExp(
+      "^(\\d{1,2})/(\\d{1,2})(?:/(\\d{2}|\\d{4}))?$"
     );
+    const compactTrDatePattern = new RegExp(
+      "^(\\d{2})(\\d{2})[-./](\\d{2}|\\d{4})$"
+    );
+    const trDatePattern = new RegExp("^(\\d{1,2})[.-](\\d{1,2})[.-](\\d{4})$");
     const isoDatePattern = new RegExp("^(\\d{4})-(\\d{1,2})-(\\d{1,2})$");
+    const normalizeYear = (yearText) => {
+      if (!yearText) return (/* @__PURE__ */ new Date()).getFullYear();
+      const year = Number(yearText);
+      return year < 100 ? 2e3 + year : year;
+    };
+    const makeDate = (year, month, day) => {
+      const date = new Date(year, month - 1, day);
+      if (date.getFullYear() !== year || date.getMonth() !== month - 1 || date.getDate() !== day) {
+        return null;
+      }
+      return date;
+    };
     if (excelDatePattern.test(raw)) {
       const d = new Date(1899, 11, 30);
       d.setDate(d.getDate() + Number(raw));
       return d;
     }
-    const tr = raw.match(trDatePattern);
-    if (tr) {
-      return new Date(Number(tr[3]), Number(tr[2]) - 1, Number(tr[1]));
-    }
     const iso = raw.match(isoDatePattern);
     if (iso) {
-      return new Date(Number(iso[1]), Number(iso[2]) - 1, Number(iso[3]));
+      return makeDate(Number(iso[1]), Number(iso[2]), Number(iso[3]));
+    }
+    const slash = raw.match(slashDatePattern);
+    if (slash) {
+      return makeDate(normalizeYear(slash[3]), Number(slash[2]), Number(slash[1]));
+    }
+    const compactTr = raw.match(compactTrDatePattern);
+    if (compactTr) {
+      return makeDate(
+        normalizeYear(compactTr[3]),
+        Number(compactTr[2]),
+        Number(compactTr[1])
+      );
+    }
+    const tr = raw.match(trDatePattern);
+    if (tr) {
+      return makeDate(Number(tr[3]), Number(tr[2]), Number(tr[1]));
     }
     return null;
   }
@@ -98,7 +126,9 @@
     "ana_gider_tutari",
     "kisi",
     "tedarikci",
+    "tedarikci_kisi",
     "kayit_ismi",
+    "kayit_kalemi",
     "aciklama",
     "kalem",
     "kalemler",
@@ -109,7 +139,14 @@
     "fatura_tarihi",
     "odenecegi_tarih",
     "odeme_tarihi",
-    "etiket"
+    "etiket",
+    "odeme_tutari",
+    "odeme_tutarlari",
+    "odeme",
+    "odeme_hesabi",
+    "odeme_hesaplari",
+    "cikis_hesabi",
+    "hesap"
   ];
   function pick(obj, keys) {
     for (const key of keys) {
@@ -118,6 +155,28 @@
       }
     }
     return "";
+  }
+  function splitSlash(value) {
+    return String(value || "").split("/").map((part) => part.trim()).filter((part) => part !== "");
+  }
+  function buildPayments({ amountRaw, dateRaw, accountRaw, description }) {
+    const amounts = splitSlash(amountRaw);
+    if (!amounts.length) return [];
+    const isMulti = amounts.length > 1;
+    const dates = isMulti ? splitSlash(dateRaw) : [String(dateRaw || "").trim()].filter(Boolean);
+    const accounts = isMulti ? splitSlash(accountRaw) : [String(accountRaw || "").trim()].filter(Boolean);
+    return amounts.map((amount, index) => {
+      const dateText = dates[index] ?? dates[0] ?? "";
+      const accountText = accounts[index] ?? accounts[0] ?? "";
+      return {
+        amount,
+        amountNumber: parseAmount(amount),
+        dateText,
+        date: parseDate(dateText),
+        account: accountText,
+        description
+      };
+    });
   }
   function detectFormat(rows, mutateRows = false) {
     if (!rows.length) {
@@ -155,6 +214,39 @@
         detectedFormat: "five-column-expense"
       };
     }
+    if (rows[0]?.length === 7) {
+      return {
+        headers: [
+          "kisi",
+          "marka",
+          "kalem_tutari",
+          "kayit_ismi",
+          "odeme_tutari",
+          "odeme_tarihi",
+          "odeme_hesabi"
+        ],
+        firstRowKeys,
+        hasHeader: false,
+        detectedFormat: "seven-column-expense-payment"
+      };
+    }
+    if (rows[0]?.length === 8) {
+      return {
+        headers: [
+          "kisi",
+          "marka",
+          "grup_toplam",
+          "kalem_tutari",
+          "kayit_ismi",
+          "odeme_tutari",
+          "odeme_tarihi",
+          "odeme_hesabi"
+        ],
+        firstRowKeys,
+        hasHeader: false,
+        detectedFormat: "eight-column-expense-payment"
+      };
+    }
     return {
       headers: [
         "toplam_tutar",
@@ -184,9 +276,16 @@
       "toplam",
       "amount"
     ]);
-    const supplier = pick(raw, ["kisi", "tedarikci", "tedarikci_adi"]);
+    const supplier = pick(raw, [
+      "kisi",
+      "tedarikci",
+      "tedarikci_adi",
+      "tedarikci_kisi",
+      "kisi_tedarikci"
+    ]);
     const title = pick(raw, [
       "kayit_ismi",
+      "kayit_kalemi",
       "kayit",
       "aciklama",
       "kalem",
@@ -202,6 +301,24 @@
       "tarih"
     ]);
     const dueDateRaw = pick(raw, ["odenecegi_tarih", "odeme_tarihi"]);
+    const paymentAmountRaw = pick(raw, [
+      "odeme_tutari",
+      "odeme_tutarlari",
+      "odeme"
+    ]);
+    const paymentDateRaw = pick(raw, ["odeme_tarihi", "odenecegi_tarih"]);
+    const paymentAccountRaw = pick(raw, [
+      "odeme_hesabi",
+      "odeme_hesaplari",
+      "cikis_hesabi",
+      "hesap"
+    ]);
+    const payments = buildPayments({
+      amountRaw: paymentAmountRaw,
+      dateRaw: paymentDateRaw,
+      accountRaw: paymentAccountRaw,
+      description: title
+    });
     return {
       raw,
       row: {
@@ -212,7 +329,8 @@
         rawBrand: brand,
         tag,
         issueDate: parseDate(issueDateRaw) || /* @__PURE__ */ new Date(),
-        dueDate: parseDate(dueDateRaw) || nextPaymentDate()
+        dueDate: parseDate(dueDateRaw) || nextPaymentDate(),
+        payments
       }
     };
   }
@@ -264,6 +382,29 @@
     if (!rows.length) return [];
     const { headers } = detectFormat(rows, true);
     return rows.map((cols) => parseRawRow(cols, headers).row).filter((row) => !getRejectedReason(row));
+  }
+  function getPaymentRecords(text) {
+    const rows = Array.isArray(text) ? text : parseTable(text);
+    const records = [];
+    rows.forEach((row, rowIndex) => {
+      const payments = Array.isArray(row.payments) ? row.payments : [];
+      payments.forEach((payment, paymentIndex) => {
+        records.push({
+          supplier: row.supplier,
+          itemName: row.title,
+          description: payment.description || row.title,
+          amount: payment.amount,
+          amountNumber: payment.amountNumber,
+          date: payment.date,
+          dateText: payment.dateText,
+          account: payment.account,
+          rowIndex,
+          paymentIndex,
+          paymentCount: payments.length
+        });
+      });
+    });
+    return records;
   }
   function inspectTableParse(text) {
     const source = String(text || "");
@@ -357,6 +498,7 @@
   function setNativeValue(el, value, options = {}) {
     if (!el) throw new Error("Input bulunamad\u0131.");
     const shouldBlur = options.blur !== false;
+    const shouldKeyup = options.keyup !== false;
     const view = el.ownerDocument?.defaultView || window;
     const wasReadonly = el.hasAttribute("readonly");
     if (wasReadonly) el.removeAttribute("readonly");
@@ -367,7 +509,9 @@
     else el.value = value;
     el.dispatchEvent(new view.Event("input", { bubbles: true }));
     el.dispatchEvent(new view.Event("change", { bubbles: true }));
-    el.dispatchEvent(new view.KeyboardEvent("keyup", { bubbles: true }));
+    if (shouldKeyup) {
+      el.dispatchEvent(new view.KeyboardEvent("keyup", { bubbles: true }));
+    }
     if (shouldBlur) {
       el.dispatchEvent(new view.Event("blur", { bubbles: true }));
     }
@@ -388,6 +532,38 @@
     el.dispatchEvent(new view.KeyboardEvent("keydown", common));
     el.dispatchEvent(new view.KeyboardEvent("keypress", common));
     el.dispatchEvent(new view.KeyboardEvent("keyup", common));
+  }
+  function clickWithoutDefaultNavigation(el) {
+    if (!el) return;
+    const doc = el.ownerDocument || document;
+    const view = doc.defaultView || window;
+    const preventOwnDefault = (event) => {
+      if (event.target === el || el.contains?.(event.target)) {
+        event.preventDefault();
+      }
+    };
+    doc.addEventListener("click", preventOwnDefault, true);
+    try {
+      el.dispatchEvent(
+        new view.MouseEvent("mousedown", {
+          bubbles: true,
+          cancelable: true,
+          view,
+          button: 0
+        })
+      );
+      el.dispatchEvent(
+        new view.MouseEvent("mouseup", {
+          bubbles: true,
+          cancelable: true,
+          view,
+          button: 0
+        })
+      );
+      el.click();
+    } finally {
+      doc.removeEventListener("click", preventOwnDefault, true);
+    }
   }
   function getVisibleDropdownRoots(root = getActiveAppDocument()) {
     const roots = $$(
@@ -645,6 +821,33 @@
     await sleep(250);
     return true;
   }
+  async function setLegacyPikadayDate(pikaSingle, date) {
+    if (!pikaSingle || !date) return false;
+    const targetYear = date.getFullYear();
+    const targetMonth = date.getMonth();
+    const targetDay = date.getDate();
+    const yearSelect = pikaSingle.querySelector("select.pika-select-year");
+    const monthSelect = pikaSingle.querySelector("select.pika-select-month");
+    const yearChanged = setSelectValue(yearSelect, targetYear);
+    const monthChanged = setSelectValue(monthSelect, targetMonth);
+    if (yearChanged || monthChanged) await sleep(350);
+    const dayButton = await waitFor(() => {
+      const cell = $$("td[data-day]", pikaSingle).find(
+        (td) => !td.classList.contains("is-empty") && Number(td.getAttribute("data-day")) === targetDay && td.querySelector("button.pika-button")
+      );
+      return cell ? cell.querySelector("button.pika-button") : null;
+    }, 2500).catch(() => null);
+    if (!dayButton) {
+      console.warn(
+        "[AJANS] Eski pikaday g\xFCn butonu bulunamad\u0131:",
+        formatDateTR(date)
+      );
+      return false;
+    }
+    dayButton.click();
+    await sleep(250);
+    return true;
+  }
   async function openBoundPikaday(input) {
     if (!input) return null;
     const view = input.ownerDocument?.defaultView || window;
@@ -729,16 +932,34 @@
   function getTrinityIframePathnames() {
     return $$("iframe[name='trinity-iframe'], iframe[data-type='trinity']").map((iframe) => getWindowPathname(iframe.contentWindow)).filter(Boolean);
   }
+  var RELEVANT_ROUTE_PATTERN = /\/(?:fis-faturalar|tedarikciler)(?:\/|$)/;
   function getAppPathname() {
     const currentPathname = getWindowPathname(window);
     const topPathname = getWindowPathname(window.top);
     const iframePathnames = getTrinityIframePathnames();
-    return [currentPathname, topPathname, ...iframePathnames].find(
-      (pathname) => /\/fis-faturalar(?:\/|$)/.test(pathname)
+    const relevantIframe = iframePathnames.find(
+      (pathname) => RELEVANT_ROUTE_PATTERN.test(pathname)
+    );
+    if (relevantIframe) return relevantIframe;
+    return [currentPathname, topPathname].find(
+      (pathname) => RELEVANT_ROUTE_PATTERN.test(pathname)
     ) || iframePathnames[0] || topPathname || currentPathname || location.pathname;
   }
   function matchesExpenseFormPath(pathname) {
     return /\/fis-faturalar\/yeni(?:\/hizli)?\/?$/.test(pathname);
+  }
+  function classifyPaymentStage(pathname, root) {
+    if (/\/fis-faturalar\/\d+/.test(pathname) && !matchesExpenseFormPath(pathname)) {
+      return "bill";
+    }
+    if (/\/tedarikciler\/\d+/.test(pathname)) return "supplier-detail";
+    if ($("[data-tns='purchase-bills-show']", root)) return "bill";
+    if ($("[data-test-contact-show-header-name]", root) || $("[data-tns='supplier-show']", root)) {
+      return "supplier-detail";
+    }
+    if ($("[data-tns='supplier-index']", root)) return "suppliers";
+    if (/\/tedarikciler\/?$/.test(pathname)) return "suppliers";
+    return null;
   }
   function getPageDetectionSnapshot(root = getActiveAppDocument()) {
     const pathname = getAppPathname();
@@ -747,6 +968,10 @@
     );
     const hasPurchaseBillShow = Boolean($("[data-tns='purchase-bills-show']", root));
     const isExpense = matchesExpenseFormPath(pathname);
+    const paymentStage = isExpense ? null : classifyPaymentStage(pathname, root);
+    let flow = "idle";
+    if (isExpense) flow = "expense";
+    else if (paymentStage) flow = "payment";
     return {
       href: location.href,
       pathname,
@@ -757,11 +982,15 @@
       hasRecordId,
       hasPurchaseBillShow,
       isExpense,
-      flow: isExpense ? "expense" : "idle"
+      paymentStage,
+      flow
     };
   }
   function isExpenseFormPage() {
     return getPageDetectionSnapshot().isExpense;
+  }
+  function getPaymentStage() {
+    return getPageDetectionSnapshot().paymentStage;
   }
 
   // src/parasut/supplier.js
@@ -888,6 +1117,432 @@
     if (row.tag) {
       await selectTag(row.tag);
     }
+  }
+
+  // src/parasut/paymentFlow.js
+  function textMatches(candidate, wanted) {
+    const a = norm(candidate);
+    const b = norm(wanted);
+    if (!a || !b) return false;
+    return a === b || a.includes(b) || b.includes(a);
+  }
+  function findByText(elements, wanted) {
+    const target = norm(wanted);
+    return elements.find((el) => norm(elementText(el)) === target) || elements.find((el) => norm(elementText(el)).includes(target)) || elements.find((el) => target.includes(norm(elementText(el)))) || null;
+  }
+  function hrefPath(anchor) {
+    return (anchor.getAttribute("href") || "").split("#")[0].split("?")[0];
+  }
+  function pickAnchorByText(anchors, wanted, labelSelector) {
+    const target = norm(wanted);
+    const textOf = (anchor) => {
+      const label = labelSelector ? anchor.querySelector(labelSelector) : null;
+      return norm(elementText(label || anchor));
+    };
+    return anchors.find((a) => textOf(a) === target) || anchors.find((a) => textOf(a).includes(target)) || anchors.find((a) => target.includes(textOf(a))) || null;
+  }
+  function clickLink(el) {
+    if (!el) return;
+    const view = el.ownerDocument?.defaultView || window;
+    const jq = view.Ember && view.Ember.$ || view.jQuery || view.$;
+    if (jq) {
+      try {
+        jq(el).trigger("click");
+        return;
+      } catch (err) {
+        console.warn("[AJANS] jQuery t\u0131klamas\u0131 ba\u015Far\u0131s\u0131z, native'e d\xFC\u015F\xFCl\xFCyor:", err);
+      }
+    }
+    const opts = { bubbles: true, cancelable: true, view, button: 0 };
+    try {
+      el.dispatchEvent(new view.MouseEvent("mousedown", opts));
+      el.dispatchEvent(new view.MouseEvent("mouseup", opts));
+    } catch {
+    }
+    el.click();
+  }
+  function getSupplierHeaderName() {
+    const el = $("[data-test-contact-show-header-name]", getActiveAppDocument());
+    return el ? elementText(el) : "";
+  }
+  function getBillContactLink() {
+    return $("a[data-tid='contact']", getActiveAppDocument());
+  }
+  function getBillTitle() {
+    const show = $("[data-tns='purchase-bills-show']", getActiveAppDocument());
+    const heading = show ? show.querySelector("h1") : null;
+    return heading ? elementText(heading) : "";
+  }
+  function billMatches(record) {
+    if (!textMatches(getBillTitle(), record.itemName)) return false;
+    const contact = getBillContactLink();
+    if (contact && !textMatches(elementText(contact), record.supplier)) return false;
+    return true;
+  }
+  function getSuppliersSearchInput() {
+    const root = getActiveAppDocument();
+    return $("[data-test-search-box] input", root) || $$("input[placeholder='Ara...']", root).find(isVisible) || null;
+  }
+  async function goToSuppliersList() {
+    if (getPaymentStage() === "suppliers" && getSuppliersSearchInput()) return;
+    const root = getActiveAppDocument();
+    const navLink = $$("a[href*='/tedarikciler']", root).find((anchor) => {
+      const href = (anchor.getAttribute("href") || "").split("#")[0];
+      return /\/tedarikciler(?:\?|$)/.test(href);
+    });
+    if (navLink) {
+      navLink.click();
+    } else {
+      const firm = (getActiveAppDocument().location?.pathname || location.pathname).match(
+        /^\/(\d+)/
+      );
+      if (!firm) throw new Error("Tedarik\xE7iler sayfas\u0131na gidilemedi.");
+      location.href = `${location.origin}/${firm[1]}/tedarikciler`;
+    }
+    await waitFor(
+      () => getPaymentStage() === "suppliers" && getSuppliersSearchInput(),
+      1e4
+    );
+  }
+  function findSupplierRowLink(supplierName) {
+    const root = getActiveAppDocument();
+    const detailLinks = $$("a[href]", root).filter(
+      (a) => /\/tedarikciler\/\d+/.test(hrefPath(a)) && isVisible(a)
+    );
+    const byHref = pickAnchorByText(
+      detailLinks,
+      supplierName,
+      "[data-test-display-name]"
+    );
+    if (byHref) return byHref;
+    const names = $$("[data-test-display-name]", root).filter(isVisible);
+    const target = findByText(names, supplierName);
+    return target ? target.closest("a[href]") || target.closest("a") : null;
+  }
+  async function searchAndOpenSupplier(supplierName) {
+    const search = await waitFor(() => getSuppliersSearchInput(), 8e3);
+    setNativeValue(search, supplierName, { blur: false });
+    await sleep(400);
+    search.focus();
+    sendKey(search, "Enter");
+    const link = await waitFor(() => findSupplierRowLink(supplierName), 9e3).catch(
+      () => null
+    );
+    if (!link) throw new Error(`Tedarik\xE7i bulunamad\u0131: ${supplierName}`);
+    clickLink(link);
+    await waitFor(() => getPaymentStage() === "supplier-detail", 12e3);
+    await waitFor(() => textMatches(getSupplierHeaderName(), supplierName), 8e3).catch(
+      () => null
+    );
+  }
+  async function ensureSupplierDetail(record) {
+    const stage = getPaymentStage();
+    if (stage === "supplier-detail" && textMatches(getSupplierHeaderName(), record.supplier)) {
+      return;
+    }
+    if (stage === "bill") {
+      const contact = getBillContactLink();
+      if (contact && textMatches(elementText(contact), record.supplier)) {
+        clickLink(contact);
+        const reached = await waitFor(
+          () => getPaymentStage() === "supplier-detail",
+          1e4
+        ).catch(() => null);
+        if (reached && textMatches(getSupplierHeaderName(), record.supplier)) return;
+      }
+    }
+    await goToSuppliersList();
+    await searchAndOpenSupplier(record.supplier);
+  }
+  function findExpenseItemLink(itemName) {
+    const root = getActiveAppDocument();
+    const billLinks = $$("a[href]", root).filter(
+      (a) => /\/fis-faturalar\/\d+/.test(hrefPath(a)) && isVisible(a)
+    );
+    const byHref = pickAnchorByText(billLinks, itemName, "[data-test-description]");
+    if (byHref) return byHref;
+    const descriptions = $$("[data-test-description]", root).filter(isVisible);
+    const target = findByText(descriptions, itemName);
+    return target ? target.closest("a[href]") || target.closest("a") : null;
+  }
+  async function openExpenseItem(record) {
+    const link = await waitFor(() => findExpenseItemLink(record.itemName), 9e3).catch(
+      () => null
+    );
+    if (!link) {
+      throw new Error(`Gider kalemi bulunamad\u0131: ${record.itemName}`);
+    }
+    clickLink(link);
+    await waitFor(() => getPaymentStage() === "bill", 12e3);
+    await waitFor(() => $("[data-tns='purchase-bills-show']", getActiveAppDocument()), 8e3);
+  }
+  function findPaymentOpenerButton() {
+    const wanted = norm("\xD6DEME EKLE");
+    return $$("button", getActiveAppDocument()).filter(isVisible).find((button) => {
+      if (button.closest("[data-tns='add-payment']")) return false;
+      if (button.closest("form")?.querySelector("[data-tns='add-payment']")) {
+        return false;
+      }
+      if (button.getAttribute("data-tid") === "save") return false;
+      return norm(elementText(button)) === wanted;
+    });
+  }
+  async function openPaymentForm() {
+    if ($("[data-tns='add-payment']", getActiveAppDocument())) return;
+    const opener = findPaymentOpenerButton();
+    if (!opener) throw new Error("'\xD6deme Ekle' butonu bulunamad\u0131.");
+    opener.click();
+    await waitFor(() => $("[data-tns='add-payment']", getActiveAppDocument()), 7e3);
+    await sleep(300);
+  }
+  function findFieldSetByLabel(form, labelTexts) {
+    const wanted = labelTexts.map(norm);
+    return $$(".fieldSet", form).find((fieldSet) => {
+      const label = fieldSet.querySelector(".fieldSet-label");
+      const text = norm(elementText(label));
+      return wanted.some((want) => text.includes(want));
+    }) || null;
+  }
+  function ensureCashPayment(form) {
+    const cashLabel = $$("label", form).find(
+      (label) => norm(elementText(label)).includes("NAK\u0130T")
+    );
+    const cashRadio = cashLabel && cashLabel.querySelector("input[type='radio']") || $$("input[name='paymentType']", form)[0];
+    if (cashRadio && !cashRadio.checked) {
+      cashRadio.click();
+      cashRadio.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+  }
+  function describeElement(el) {
+    if (!el) return null;
+    return {
+      tag: el.tagName,
+      id: el.id || "",
+      className: String(el.className || ""),
+      text: elementText(el).slice(0, 120),
+      href: el.getAttribute?.("href") || "",
+      dataTid: el.getAttribute?.("data-tid") || "",
+      type: el.getAttribute?.("type") || ""
+    };
+  }
+  function urlFromHistoryArgs(view, args) {
+    const rawUrl = args[2];
+    if (rawUrl === void 0 || rawUrl === null || rawUrl === "") return null;
+    try {
+      return new URL(String(rawUrl), view.location.href);
+    } catch {
+      return null;
+    }
+  }
+  function isCompanyRootHashUrl(url) {
+    return Boolean(url && /^\/\d+\/?$/.test(url.pathname) && url.hash === "#");
+  }
+  function installPaymentNavigationGuard(form) {
+    const doc = form.ownerDocument || document;
+    const view = doc.defaultView || window;
+    const history = view.history;
+    const originalPushState = history.pushState;
+    const originalReplaceState = history.replaceState;
+    const clickLogger = (event) => {
+      const control = event.target?.closest?.("a, button, input");
+      if (!control || !form.contains(control)) return;
+      console.info("[AJANS][payment-click]", {
+        control: describeElement(control),
+        defaultPrevented: event.defaultPrevented,
+        href: view.location.href
+      });
+    };
+    const wrapHistory = (methodName, original) => {
+      if (typeof original !== "function") return original;
+      return function guardedPaymentHistoryMethod(...args) {
+        const targetUrl = urlFromHistoryArgs(view, args);
+        console.info("[AJANS][payment-history]", {
+          methodName,
+          from: view.location.href,
+          to: targetUrl?.href || ""
+        });
+        if (isCompanyRootHashUrl(targetUrl)) {
+          console.warn("[AJANS] \xD6deme otomasyonu root hash y\xF6nlendirmesini engelledi.", {
+            methodName,
+            from: view.location.href,
+            to: targetUrl.href
+          });
+          return void 0;
+        }
+        return original.apply(this, args);
+      };
+    };
+    doc.addEventListener("click", clickLogger, true);
+    history.pushState = wrapHistory("pushState", originalPushState);
+    history.replaceState = wrapHistory("replaceState", originalReplaceState);
+    return () => {
+      doc.removeEventListener("click", clickLogger, true);
+      history.pushState = originalPushState;
+      history.replaceState = originalReplaceState;
+    };
+  }
+  function isPaymentSaveControl(target, form) {
+    const control = target?.closest?.("button, input[type='submit'], a");
+    if (!control || !form.contains(control)) return false;
+    if (control.closest(".pika-single, .dropdownContent")) return false;
+    const text = norm(elementText(control) || control.value || "");
+    return control.getAttribute("data-tid") === "save" || text === "\xD6DEME EKLE";
+  }
+  function installPaymentSubmitGuard(form) {
+    const doc = form.ownerDocument || document;
+    const originalSubmit = form.submit;
+    const originalRequestSubmit = form.requestSubmit;
+    const blockProgrammaticSubmit = () => {
+      console.warn("[AJANS] Otomasyon s\u0131ras\u0131nda programatik \xF6deme kaydetme engellendi.");
+    };
+    const blockSubmit = (event) => {
+      if (event.target === form || form.contains(event.target)) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        console.warn("[AJANS] Otomasyon s\u0131ras\u0131nda \xF6deme kaydetme engellendi.");
+      }
+    };
+    const blockSaveClick = (event) => {
+      if (!isPaymentSaveControl(event.target, form)) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      console.warn("[AJANS] Otomasyon son \xD6DEME EKLE butonuna basmad\u0131.");
+    };
+    doc.addEventListener("submit", blockSubmit, true);
+    doc.addEventListener("click", blockSaveClick, true);
+    try {
+      form.submit = blockProgrammaticSubmit;
+      form.requestSubmit = blockProgrammaticSubmit;
+    } catch (err) {
+      console.warn("[AJANS] \xD6deme submit guard form metodlar\u0131n\u0131 saramad\u0131:", err);
+    }
+    return () => {
+      doc.removeEventListener("submit", blockSubmit, true);
+      doc.removeEventListener("click", blockSaveClick, true);
+      try {
+        form.submit = originalSubmit;
+        form.requestSubmit = originalRequestSubmit;
+      } catch {
+      }
+    };
+  }
+  async function withPaymentSubmitGuard(form, action) {
+    const releaseGuard = installPaymentSubmitGuard(form);
+    const releaseNavigationGuard = installPaymentNavigationGuard(form);
+    try {
+      const result = await action();
+      await sleep(1200);
+      return result;
+    } finally {
+      releaseNavigationGuard();
+      releaseGuard();
+    }
+  }
+  async function setPaymentDate(form, date) {
+    const fieldSet = findFieldSetByLabel(form, ["TAR\u0130H"]);
+    if (!fieldSet) {
+      console.warn("[AJANS] \xD6deme TAR\u0130H alan\u0131 bulunamad\u0131.");
+      return false;
+    }
+    const input = fieldSet.querySelector("input[type='text'], input.field, input");
+    if (input) {
+      setNativeValue(input, formatDateTR(date), { blur: false, keyup: false });
+      await sleep(250);
+      return true;
+    }
+    const pikaSingle = await waitFor(
+      () => fieldSet.querySelector(".pika-single"),
+      3e3
+    ).catch(() => null);
+    if (!pikaSingle) {
+      console.warn("[AJANS] \xD6deme tarihi takvimi a\xE7\u0131lamad\u0131.");
+      return false;
+    }
+    return setLegacyPikadayDate(pikaSingle, date);
+  }
+  async function selectPaymentAccount(form, account) {
+    const fieldSet = findFieldSetByLabel(form, ["HESAP"]);
+    if (!fieldSet) throw new Error("HESAP alan\u0131 bulunamad\u0131.");
+    const dropdown = fieldSet.querySelector(".dropdown") || fieldSet;
+    const input = dropdown.querySelector("input");
+    const caret = dropdown.querySelector("a[class*='field-innerAppend']");
+    if (input) {
+      try {
+        input.focus();
+        input.click();
+      } catch {
+      }
+    }
+    await sleep(250);
+    const wanted = norm(account);
+    const link = await waitFor(() => {
+      const items = $$(".dropdownContent a", dropdown).filter(isVisible);
+      if (!items.length) {
+        if (caret) caret.click();
+        else if (input) input.click();
+        return null;
+      }
+      return items.find((item) => norm(elementText(item)) === wanted) || items.find((item) => norm(elementText(item)).includes(wanted)) || items.find((item) => wanted.includes(norm(elementText(item)))) || null;
+    }, 6e3).catch(() => null);
+    if (!link) throw new Error(`Hesap bulunamad\u0131: ${account}`);
+    clickWithoutDefaultNavigation(link);
+    await sleep(300);
+  }
+  function setPaymentAmount(form, amount) {
+    const fieldSet = findFieldSetByLabel(form, ["MEBLA\u011E", "MEBLAG"]);
+    if (!fieldSet) throw new Error("MEBLA\u011E alan\u0131 bulunamad\u0131.");
+    const input = fieldSet.querySelector("input.field-number") || fieldSet.querySelector("input.field") || fieldSet.querySelector("input");
+    if (!input) throw new Error("MEBLA\u011E alan\u0131 (input) bulunamad\u0131.");
+    setNativeValue(input, formatAmountTR(amount), { blur: false, keyup: false });
+  }
+  function setPaymentDescription(form, description) {
+    if (!description) return;
+    const fieldSet = findFieldSetByLabel(form, ["A\xC7IKLAMA", "ACIKLAMA"]);
+    if (!fieldSet) {
+      console.warn("[AJANS] \xD6deme A\xC7IKLAMA alan\u0131 bulunamad\u0131.");
+      return;
+    }
+    const input = fieldSet.querySelector("input[type='text']") || fieldSet.querySelector("input.field") || fieldSet.querySelector("input");
+    if (input) setNativeValue(input, description, { blur: false, keyup: false });
+  }
+  async function fillPaymentForm(record) {
+    const form = await waitFor(
+      () => $("[data-tns='add-payment']", getActiveAppDocument()),
+      7e3
+    );
+    await withPaymentSubmitGuard(form, async () => {
+      ensureCashPayment(form);
+      if (record.date) {
+        await setPaymentDate(form, record.date);
+      }
+      if (record.account) {
+        await selectPaymentAccount(form, record.account);
+      }
+      setPaymentAmount(form, record.amount);
+      setPaymentDescription(form, record.description || record.itemName);
+    });
+  }
+  async function runPayment(record, onProgress = () => {
+  }) {
+    if (!record) throw new Error("\xD6deme kayd\u0131 yok.");
+    if (!record.supplier) throw new Error("Tedarik\xE7i ad\u0131 bo\u015F.");
+    if (!record.itemName) throw new Error("Gider kalemi ad\u0131 bo\u015F.");
+    if (!record.amount) throw new Error("\xD6deme tutar\u0131 bo\u015F.");
+    const stage = getPaymentStage();
+    if (stage === "bill" && billMatches(record)) {
+      onProgress("Ayn\u0131 gider kalemindeyiz, \xF6deme formu a\xE7\u0131l\u0131yor...");
+      await openPaymentForm();
+      await fillPaymentForm(record);
+      return;
+    }
+    onProgress(`Tedarik\xE7i a\xE7\u0131l\u0131yor: ${record.supplier}`);
+    await ensureSupplierDetail(record);
+    onProgress(`Gider kalemi a\xE7\u0131l\u0131yor: ${record.itemName}`);
+    await openExpenseItem(record);
+    onProgress("\xD6deme formu a\xE7\u0131l\u0131yor...");
+    await openPaymentForm();
+    onProgress("\xD6deme alanlar\u0131 dolduruluyor...");
+    await fillPaymentForm(record);
   }
 
   // src/parasut/frame.js
@@ -1168,7 +1823,7 @@
           width:8px; height:8px; border-radius:50%;
           background:${ACCENT2}; flex:0 0 auto;
         "></span>
-        <div style="font-weight:600; font-size:13px; color:${TEXT2}; letter-spacing:-0.01em;">
+        <div id="ajans-gider-title-text" style="font-weight:600; font-size:13px; color:${TEXT2}; letter-spacing:-0.01em;">
           Gider Doldurucu
         </div>
       </div>
@@ -1209,8 +1864,7 @@
         color:${MUTED2};
         line-height:1.5;
       ">
-        Excel'den t\xFCm sat\u0131rlar\u0131 kopyalay\u0131p a\u015Fa\u011F\u0131ya yap\u0131\u015Ft\u0131r. Sayfa de\u011Fi\u015Fse de veri burada kal\u0131r.<br>
-        <span style="color:${TEXT2};">S\xFCtun s\u0131ras\u0131:</span> Ki\u015Fi \xB7 Marka \xB7 Tutar \xB7 Kay\u0131t ismi
+        <span id="ajans-gider-help-content"></span>
       </div>
 
       <div id="ajans-gider-data-collapsed" hidden style="
@@ -1440,6 +2094,21 @@
             letter-spacing:-0.01em;
           ">Ana Gideri Doldur</button>
         </div>
+
+        <div id="ajans-gider-payment-actions" style="display:none;">
+          <button id="ajans-gider-pay" style="
+            padding:9px 14px;
+            background:${ACCENT2};
+            color:#ffffff;
+            border:0;
+            border-radius:9px;
+            font-weight:600;
+            font-size:13px;
+            cursor:pointer;
+            box-shadow: 0 1px 0 rgba(15,23,42,.05);
+            letter-spacing:-0.01em;
+          ">\xD6demeyi Ba\u015Flat</button>
+        </div>
       </div>
     </div>
   `;
@@ -1491,6 +2160,14 @@
     button.style.cursor = loading ? "not-allowed" : "pointer";
     button.style.background = loading ? ACCENT_DARK2 : ACCENT3;
   }
+  function setPayButtonLoading(button, loading) {
+    if (!button) return;
+    button.disabled = loading;
+    button.textContent = loading ? "\xC7al\u0131\u015F\u0131yor..." : "\xD6demeyi Ba\u015Flat";
+    button.style.opacity = loading ? "0.65" : "1";
+    button.style.cursor = loading ? "not-allowed" : "pointer";
+    button.style.background = loading ? ACCENT_DARK2 : ACCENT3;
+  }
   function applyMinimizedState(panel, body, button) {
     const minimized = isPanelMinimized();
     body.style.display = minimized ? "none" : "block";
@@ -1502,10 +2179,12 @@
 
   // src/panel/controller.js
   var isFilling = false;
+  var isRunningPayment = false;
   var lastDecisionLogKey = "";
   var lastParseDebugKey = "";
   var isDataEditorOpen = true;
   var isHelpOpen = false;
+  var paymentAwaitingManualSave = false;
   function appendDebugLog(event, details = {}) {
     const entry = {
       ts: (/* @__PURE__ */ new Date()).toISOString(),
@@ -1611,16 +2290,56 @@
   function getCurrentFlow() {
     return getPageDetectionSnapshot().flow;
   }
+  function isBusy() {
+    return isFilling || isRunningPayment;
+  }
+  function isPaymentFormOpen() {
+    return Boolean($("[data-tns='add-payment']", getActiveAppDocument()));
+  }
+  function clearPaymentWaitIfFormClosed() {
+    if (paymentAwaitingManualSave && !isPaymentFormOpen()) {
+      paymentAwaitingManualSave = false;
+    }
+  }
+  function getActiveRecords(flow = getCurrentFlow()) {
+    const rows = getRowsFromTextarea();
+    if (flow === "payment") {
+      return { kind: "payment", items: getPaymentRecords(rows) };
+    }
+    return { kind: "expense", items: rows };
+  }
   function advanceSelectionAfterSuccessfulFill(currentIndex, rowsLength) {
     if (currentIndex >= rowsLength - 1) return false;
     setSelectedIndex(currentIndex + 1);
     syncPanelRows();
     return true;
   }
+  var FLOW_TITLES = {
+    expense: "Gider Doldurucu",
+    payment: "\xD6deme Doldurucu",
+    idle: "Gider / \xD6deme Doldurucu"
+  };
+  var FLOW_HELP = {
+    expense: "Excel sat\u0131rlar\u0131n\u0131 kopyalay\u0131p a\u015Fa\u011F\u0131ya yap\u0131\u015Ft\u0131r. Sayfa de\u011Fi\u015Fse de veri kal\u0131r.<br><b>S\xFCtunlar:</b> Ki\u015Fi \xB7 Marka \xB7 Tutar \xB7 Kay\u0131t \u0130smi<br>Se\xE7ili kayd\u0131 <b>Ana Gideri Doldur</b> ile forma yazar; kaydetmeyi sen yapars\u0131n.",
+    payment: "Excel sat\u0131rlar\u0131n\u0131 kopyalay\u0131p a\u015Fa\u011F\u0131ya yap\u0131\u015Ft\u0131r. Sayfa de\u011Fi\u015Fse de veri kal\u0131r.<br><b>\xD6deme s\xFCtunlar\u0131:</b> \xD6deme Tutar\u0131 \xB7 \xD6deme Tarihi \xB7 \xD6deme Hesab\u0131<br>Birden fazla \xF6deme i\xE7in tutar/tarih/hesab\u0131 <b>/</b> ile ay\u0131r. <b>\xD6demeyi Ba\u015Flat</b> tedarik\xE7iyi bulup \xF6deme formunu doldurur; son <b>\xD6DEME EKLE</b>'ye sen basars\u0131n.",
+    idle: "Excel sat\u0131rlar\u0131n\u0131 kopyalay\u0131p a\u015Fa\u011F\u0131ya yap\u0131\u015Ft\u0131r. Sayfa de\u011Fi\u015Fse de veri kal\u0131r.<br>Gider formuna gidince gider, tedarik\xE7i sayfas\u0131na gidince \xF6deme arac\u0131 \xE7\u0131kar."
+  };
   function updateFlowVisibility(flow = getCurrentFlow()) {
     const expenseActions = $("#ajans-gider-expense-actions");
+    const paymentActions = $("#ajans-gider-payment-actions");
+    const titleText = $("#ajans-gider-title-text");
+    const helpContent = $("#ajans-gider-help-content");
     if (expenseActions) {
       expenseActions.style.display = flow === "expense" ? "block" : "none";
+    }
+    if (paymentActions) {
+      paymentActions.style.display = flow === "payment" ? "block" : "none";
+    }
+    if (titleText) {
+      titleText.textContent = FLOW_TITLES[flow] || FLOW_TITLES.idle;
+    }
+    if (helpContent) {
+      helpContent.innerHTML = FLOW_HELP[flow] || FLOW_HELP.idle;
     }
   }
   function applyDataEditorState() {
@@ -1672,7 +2391,38 @@
       next.style.cursor = disabled ? "not-allowed" : "pointer";
     }
   }
-  function renderRecordCard(row, selectedIndex, rowsLength) {
+  function renderMetaChips(meta, chips) {
+    if (!meta) return;
+    meta.innerHTML = "";
+    if (!chips.length) {
+      meta.style.display = "none";
+      return;
+    }
+    meta.style.display = "flex";
+    chips.forEach(({ label, tone }) => {
+      const span = document.createElement("span");
+      span.textContent = label;
+      span.style.cssText = tone === "accent" ? `
+          padding:2px 8px;
+          border-radius:999px;
+          background:#e0ecff;
+          color:#0f4fc1;
+          font-size:11px;
+          font-weight:600;
+          line-height:1.6;
+        ` : `
+          padding:2px 8px;
+          border-radius:999px;
+          background:#f1f5f9;
+          color:#475569;
+          font-size:11px;
+          font-weight:500;
+          line-height:1.6;
+        `;
+      meta.appendChild(span);
+    });
+  }
+  function renderRecordCard(item, kind, selectedIndex, total) {
     const empty = $("#ajans-gider-empty");
     const record = $("#ajans-gider-record");
     const supplier = $("#ajans-gider-supplier");
@@ -1681,7 +2431,7 @@
     const dates = $("#ajans-gider-dates");
     const title = $("#ajans-gider-title");
     if (!empty || !record) return;
-    if (!row) {
+    if (!item) {
       empty.hidden = false;
       record.hidden = true;
       return;
@@ -1689,123 +2439,131 @@
     empty.hidden = true;
     record.hidden = false;
     if (supplier) {
-      supplier.textContent = String(row.supplier || "Tedarik\xE7i yok").trim();
-    }
-    if (meta) {
-      meta.innerHTML = "";
-      const chips = [];
-      const brand = String(row.brand || "").trim();
-      const tag = String(row.tag || "").trim();
-      const rawBrand = row.rawBrand && row.rawBrand !== row.brand ? String(row.rawBrand).trim() : "";
-      if (brand) chips.push({ label: brand, tone: "accent" });
-      if (tag) chips.push({ label: tag, tone: "muted" });
-      if (rawBrand) chips.push({ label: `Excel: ${rawBrand}`, tone: "muted" });
-      if (!chips.length) {
-        meta.style.display = "none";
-      } else {
-        meta.style.display = "flex";
-        chips.forEach(({ label, tone }) => {
-          const span = document.createElement("span");
-          span.textContent = label;
-          span.style.cssText = tone === "accent" ? `
-              padding:2px 8px;
-              border-radius:999px;
-              background:#e0ecff;
-              color:#0f4fc1;
-              font-size:11px;
-              font-weight:600;
-              line-height:1.6;
-            ` : `
-              padding:2px 8px;
-              border-radius:999px;
-              background:#f1f5f9;
-              color:#475569;
-              font-size:11px;
-              font-weight:500;
-              line-height:1.6;
-            `;
-          meta.appendChild(span);
-        });
-      }
+      supplier.textContent = String(item.supplier || "Tedarik\xE7i yok").trim();
     }
     if (amount) {
-      amount.textContent = `\u20BA ${formatAmountTR(row.amount)}`;
+      amount.textContent = `\u20BA ${formatAmountTR(item.amount)}`;
     }
+    if (kind === "payment") {
+      const chips2 = [];
+      if (item.paymentCount > 1) {
+        chips2.push({
+          label: `\xD6deme ${item.paymentIndex + 1}/${item.paymentCount}`,
+          tone: "accent"
+        });
+      }
+      renderMetaChips(meta, chips2);
+      if (dates) {
+        const parts = [];
+        if (item.date) parts.push(`Tarih: ${formatDateTR(item.date)}`);
+        if (item.account) parts.push(`Hesap: ${String(item.account).trim()}`);
+        dates.textContent = parts.join("  \xB7  ");
+        dates.style.display = parts.length ? "block" : "none";
+      }
+      if (title) {
+        const text = String(item.itemName || "").trim();
+        title.textContent = text;
+        title.title = text;
+        title.style.display = text ? "-webkit-box" : "none";
+      }
+      setStepButtonsState(selectedIndex, total);
+      return;
+    }
+    const chips = [];
+    const brand = String(item.brand || "").trim();
+    const tag = String(item.tag || "").trim();
+    const rawBrand = item.rawBrand && item.rawBrand !== item.brand ? String(item.rawBrand).trim() : "";
+    if (brand) chips.push({ label: brand, tone: "accent" });
+    if (tag) chips.push({ label: tag, tone: "muted" });
+    if (rawBrand) chips.push({ label: `Excel: ${rawBrand}`, tone: "muted" });
+    renderMetaChips(meta, chips);
     if (dates) {
       const parts = [];
-      if (row.issueDate) parts.push(`Fatura: ${formatDateTR(row.issueDate)}`);
-      if (row.dueDate) parts.push(`\xD6deme: ${formatDateTR(row.dueDate)}`);
+      if (item.issueDate) parts.push(`Fatura: ${formatDateTR(item.issueDate)}`);
+      if (item.dueDate) parts.push(`\xD6deme: ${formatDateTR(item.dueDate)}`);
       dates.textContent = parts.join("  \xB7  ");
       dates.style.display = parts.length ? "block" : "none";
     }
     if (title) {
-      const text = String(row.title || "").trim();
-      if (text) {
-        title.textContent = text;
-        title.title = text;
-        title.style.display = "-webkit-box";
-      } else {
-        title.textContent = "";
-        title.title = "";
-        title.style.display = "none";
-      }
+      const text = String(item.title || "").trim();
+      title.textContent = text;
+      title.title = text;
+      title.style.display = text ? "-webkit-box" : "none";
     }
-    setStepButtonsState(selectedIndex, rowsLength);
+    setStepButtonsState(selectedIndex, total);
   }
   function syncPanelRows() {
+    clearPaymentWaitIfFormClosed();
     const textarea = $("#ajans-gider-textarea");
     const select = $("#ajans-gider-row-select");
     if (!textarea) return;
     const flow = getCurrentFlow();
     updateFlowVisibility(flow);
     applyHelpState();
-    let rows = [];
+    let records = { kind: flow === "payment" ? "payment" : "expense", items: [] };
     let parseError = null;
     try {
-      rows = parseTable(textarea.value);
+      records = getActiveRecords(flow);
     } catch (err) {
       parseError = err;
     }
-    if (parseError || String(textarea.value || "").trim() && !rows.length) {
+    const items = records.items;
+    const kind = records.kind;
+    if (parseError || String(textarea.value || "").trim() && !items.length) {
       logParseSnapshot("sync-empty", textarea.value);
     }
     if (select) {
       select.innerHTML = "";
-      if (rows.length) {
-        rows.forEach((row, index) => {
-          const option = document.createElement("option");
-          option.value = String(index);
-          const supplier = String(row.supplier || "Tedarik\xE7i yok").trim();
-          const shortSupplier = supplier.length > 28 ? `${supplier.slice(0, 28)}\u2026` : supplier;
-          const amountText = `${formatAmountTR(row.amount)} TL`;
-          option.textContent = `${index + 1} / ${rows.length}  \xB7  ${shortSupplier}  \xB7  ${amountText}`;
-          select.appendChild(option);
-        });
-      }
+      items.forEach((item, index) => {
+        const option = document.createElement("option");
+        option.value = String(index);
+        const supplier = String(item.supplier || "Tedarik\xE7i yok").trim();
+        const shortSupplier = supplier.length > 24 ? `${supplier.slice(0, 24)}\u2026` : supplier;
+        const amountText = `${formatAmountTR(item.amount)} TL`;
+        const suffix = kind === "payment" && item.paymentCount > 1 ? `  \xB7  \xD6d. ${item.paymentIndex + 1}/${item.paymentCount}` : "";
+        option.textContent = `${index + 1} / ${items.length}  \xB7  ${shortSupplier}  \xB7  ${amountText}${suffix}`;
+        select.appendChild(option);
+      });
     }
-    setDataSummary(rows.length);
+    setDataSummary(items.length);
     applyDataEditorState();
     if (parseError) {
-      renderRecordCard(null, 0, 0);
-      setStatus(String(parseError.message || parseError), true);
+      renderRecordCard(null, kind, 0, 0);
+      if (!isBusy()) setStatus(String(parseError.message || parseError), true);
       return;
     }
-    if (!rows.length) {
-      renderRecordCard(null, 0, 0);
+    if (!items.length) {
+      renderRecordCard(null, kind, 0, 0);
+      if (isBusy()) return;
       if (flow === "expense") {
         setStatus("Gider formundas\u0131n. Veri yap\u0131\u015Ft\u0131r\u0131nca doldurulur.");
+      } else if (flow === "payment") {
+        const hasText = String(textarea.value || "").trim().length > 0;
+        setStatus(
+          hasText ? "\xD6deme kayd\u0131 yok. Excel'e \xD6deme Tutar\u0131 / Tarihi / Hesab\u0131 s\xFCtunlar\u0131n\u0131 ekle." : "Tedarik\xE7iler sayfas\u0131ndas\u0131n. Excel'i yap\u0131\u015Ft\u0131r\u0131nca \xF6demeleri ba\u015Flatabilirsin."
+        );
       } else {
         setStatus("");
       }
       return;
     }
-    const selectedIndex = getSelectedIndex(rows.length);
+    const selectedIndex = getSelectedIndex(items.length);
     if (select) select.value = String(selectedIndex);
-    renderRecordCard(rows[selectedIndex], selectedIndex, rows.length);
+    renderRecordCard(items[selectedIndex], kind, selectedIndex, items.length);
+    if (isBusy()) return;
     if (flow === "expense") {
       setStatus("");
+    } else if (flow === "payment") {
+      if (paymentAwaitingManualSave && isPaymentFormOpen()) {
+        setStatus(
+          '\xD6deme formu a\xE7\u0131k. Kontrol edip Para\u015F\xFCt i\xE7indeki son "\xD6DEME EKLE" butonuna manuel bas; form kapand\u0131ktan sonra \u203A ile devam et.',
+          "success"
+        );
+        return;
+      }
+      setStatus("");
     } else {
-      setStatus("Yeni gider formuna gidince bu kayd\u0131 doldurabilirsin.");
+      setStatus("Gider formu veya tedarik\xE7i sayfas\u0131na gidince bu kayd\u0131 kullanabilirsin.");
     }
   }
   function registerPanelEvents(panel) {
@@ -1876,17 +2634,17 @@
       });
     }
     $("#ajans-gider-prev").addEventListener("click", () => {
-      const rows = getRowsFromTextarea();
-      if (!rows.length) return;
-      const current = getSelectedIndex(rows.length);
+      const count = getActiveRecords().items.length;
+      if (!count) return;
+      const current = getSelectedIndex(count);
       setSelectedIndex(Math.max(0, current - 1));
       syncPanelRows();
     });
     $("#ajans-gider-next").addEventListener("click", () => {
-      const rows = getRowsFromTextarea();
-      if (!rows.length) return;
-      const current = getSelectedIndex(rows.length);
-      setSelectedIndex(Math.min(rows.length - 1, current + 1));
+      const count = getActiveRecords().items.length;
+      if (!count) return;
+      const current = getSelectedIndex(count);
+      setSelectedIndex(Math.min(count - 1, current + 1));
       syncPanelRows();
     });
     $("#ajans-gider-clear").addEventListener("click", () => {
@@ -1921,6 +2679,41 @@
       } finally {
         isFilling = false;
         setFillButtonLoading(button, false);
+      }
+    });
+    $("#ajans-gider-pay").addEventListener("click", async (event) => {
+      const button = event.currentTarget;
+      if (isRunningPayment) return;
+      isRunningPayment = true;
+      setPayButtonLoading(button, true);
+      try {
+        clearPaymentWaitIfFormClosed();
+        if (paymentAwaitingManualSave && isPaymentFormOpen()) {
+          throw new Error(
+            'A\xE7\u0131k \xF6deme formu var. \xD6nce kontrol edip Para\u015F\xFCt i\xE7indeki son "\xD6DEME EKLE" butonuna manuel bas, form kapand\u0131ktan sonra sonraki \xF6demeye ge\xE7.'
+          );
+        }
+        const records = getActiveRecords("payment").items;
+        if (!records.length) {
+          throw new Error(
+            "\xD6deme kayd\u0131 bulunamad\u0131. Excel'e \xD6deme Tutar\u0131 / Tarihi / Hesab\u0131 s\xFCtunlar\u0131n\u0131 ekledin mi?"
+          );
+        }
+        const index = getSelectedIndex(records.length);
+        const record = records[index];
+        setStatus(`${index + 1}. \xF6deme i\u015Fleniyor...`);
+        await runPayment(record, (message) => setStatus(message));
+        paymentAwaitingManualSave = true;
+        setStatus(
+          `\xD6deme formu dolduruldu (${index + 1}/${records.length}). Kontrol edip "\xD6DEME EKLE"ye bas, sonra \u203A ile sonraki \xF6demeye ge\xE7.`,
+          "success"
+        );
+      } catch (err) {
+        console.error("[AJANS] \xD6deme hatas\u0131:", err);
+        setStatus(err.message || String(err), true);
+      } finally {
+        isRunningPayment = false;
+        setPayButtonLoading(button, false);
       }
     });
     minimizeButton.addEventListener("click", () => {
@@ -1973,6 +2766,7 @@
       lastDecisionLogKey = decisionLogKey;
     }
     if (flow === "idle") {
+      if (isBusy()) return flow;
       removePanel("idle-flow", snapshot);
       return flow;
     }

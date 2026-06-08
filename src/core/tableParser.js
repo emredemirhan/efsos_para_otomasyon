@@ -10,7 +10,9 @@ const HEADER_KEYS = [
   "ana_gider_tutari",
   "kisi",
   "tedarikci",
+  "tedarikci_kisi",
   "kayit_ismi",
+  "kayit_kalemi",
   "aciklama",
   "kalem",
   "kalemler",
@@ -22,6 +24,13 @@ const HEADER_KEYS = [
   "odenecegi_tarih",
   "odeme_tarihi",
   "etiket",
+  "odeme_tutari",
+  "odeme_tutarlari",
+  "odeme",
+  "odeme_hesabi",
+  "odeme_hesaplari",
+  "cikis_hesabi",
+  "hesap",
 ];
 
 function pick(obj, keys) {
@@ -32,6 +41,40 @@ function pick(obj, keys) {
   }
 
   return "";
+}
+
+function splitSlash(value) {
+  return String(value || "")
+    .split("/")
+    .map((part) => part.trim())
+    .filter((part) => part !== "");
+}
+
+function buildPayments({ amountRaw, dateRaw, accountRaw, description }) {
+  const amounts = splitSlash(amountRaw);
+  if (!amounts.length) return [];
+
+  const isMulti = amounts.length > 1;
+  const dates = isMulti
+    ? splitSlash(dateRaw)
+    : [String(dateRaw || "").trim()].filter(Boolean);
+  const accounts = isMulti
+    ? splitSlash(accountRaw)
+    : [String(accountRaw || "").trim()].filter(Boolean);
+
+  return amounts.map((amount, index) => {
+    const dateText = dates[index] ?? dates[0] ?? "";
+    const accountText = accounts[index] ?? accounts[0] ?? "";
+
+    return {
+      amount,
+      amountNumber: parseAmount(amount),
+      dateText,
+      date: parseDate(dateText),
+      account: accountText,
+      description,
+    };
+  });
 }
 
 function detectFormat(rows, mutateRows = false) {
@@ -76,6 +119,41 @@ function detectFormat(rows, mutateRows = false) {
     };
   }
 
+  if (rows[0]?.length === 7) {
+    return {
+      headers: [
+        "kisi",
+        "marka",
+        "kalem_tutari",
+        "kayit_ismi",
+        "odeme_tutari",
+        "odeme_tarihi",
+        "odeme_hesabi",
+      ],
+      firstRowKeys,
+      hasHeader: false,
+      detectedFormat: "seven-column-expense-payment",
+    };
+  }
+
+  if (rows[0]?.length === 8) {
+    return {
+      headers: [
+        "kisi",
+        "marka",
+        "grup_toplam",
+        "kalem_tutari",
+        "kayit_ismi",
+        "odeme_tutari",
+        "odeme_tarihi",
+        "odeme_hesabi",
+      ],
+      firstRowKeys,
+      hasHeader: false,
+      detectedFormat: "eight-column-expense-payment",
+    };
+  }
+
   return {
     headers: [
       "toplam_tutar",
@@ -108,10 +186,17 @@ function parseRawRow(cols, headers) {
     "toplam",
     "amount",
   ]);
-  const supplier = pick(raw, ["kisi", "tedarikci", "tedarikci_adi"]);
+  const supplier = pick(raw, [
+    "kisi",
+    "tedarikci",
+    "tedarikci_adi",
+    "tedarikci_kisi",
+    "kisi_tedarikci",
+  ]);
 
   const title = pick(raw, [
     "kayit_ismi",
+    "kayit_kalemi",
     "kayit",
     "aciklama",
     "kalem",
@@ -131,6 +216,26 @@ function parseRawRow(cols, headers) {
 
   const dueDateRaw = pick(raw, ["odenecegi_tarih", "odeme_tarihi"]);
 
+  const paymentAmountRaw = pick(raw, [
+    "odeme_tutari",
+    "odeme_tutarlari",
+    "odeme",
+  ]);
+  const paymentDateRaw = pick(raw, ["odeme_tarihi", "odenecegi_tarih"]);
+  const paymentAccountRaw = pick(raw, [
+    "odeme_hesabi",
+    "odeme_hesaplari",
+    "cikis_hesabi",
+    "hesap",
+  ]);
+
+  const payments = buildPayments({
+    amountRaw: paymentAmountRaw,
+    dateRaw: paymentDateRaw,
+    accountRaw: paymentAccountRaw,
+    description: title,
+  });
+
   return {
     raw,
     row: {
@@ -142,6 +247,7 @@ function parseRawRow(cols, headers) {
       tag,
       issueDate: parseDate(issueDateRaw) || new Date(),
       dueDate: parseDate(dueDateRaw) || nextPaymentDate(),
+      payments,
     },
   };
 }
@@ -212,6 +318,33 @@ export function parseTable(text) {
   return rows
     .map((cols) => parseRawRow(cols, headers).row)
     .filter((row) => !getRejectedReason(row));
+}
+
+export function getPaymentRecords(text) {
+  const rows = Array.isArray(text) ? text : parseTable(text);
+  const records = [];
+
+  rows.forEach((row, rowIndex) => {
+    const payments = Array.isArray(row.payments) ? row.payments : [];
+
+    payments.forEach((payment, paymentIndex) => {
+      records.push({
+        supplier: row.supplier,
+        itemName: row.title,
+        description: payment.description || row.title,
+        amount: payment.amount,
+        amountNumber: payment.amountNumber,
+        date: payment.date,
+        dateText: payment.dateText,
+        account: payment.account,
+        rowIndex,
+        paymentIndex,
+        paymentCount: payments.length,
+      });
+    });
+  });
+
+  return records;
 }
 
 export function inspectTableParse(text) {

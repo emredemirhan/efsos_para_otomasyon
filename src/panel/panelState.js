@@ -58,6 +58,16 @@ export function setFillButtonLoading(button, loading) {
   button.style.background = loading ? ACCENT_DARK : ACCENT;
 }
 
+export function setPayButtonLoading(button, loading) {
+  if (!button) return;
+
+  button.disabled = loading;
+  button.textContent = loading ? "Çalışıyor..." : "Ödemeyi Başlat";
+  button.style.opacity = loading ? "0.65" : "1";
+  button.style.cursor = loading ? "not-allowed" : "pointer";
+  button.style.background = loading ? ACCENT_DARK : ACCENT;
+}
+
 export function applyMinimizedState(panel, body, button) {
   const minimized = isPanelMinimized();
 

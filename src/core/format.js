@@ -33,10 +33,33 @@ export function parseDate(value) {
 
   const raw = String(value).trim();
   const excelDatePattern = new RegExp("^\\d{5}$");
-  const trDatePattern = new RegExp(
-    "^(\\d{1,2})[./-](\\d{1,2})[./-](\\d{4})$",
+  const slashDatePattern = new RegExp(
+    "^(\\d{1,2})/(\\d{1,2})(?:/(\\d{2}|\\d{4}))?$",
   );
+  const compactTrDatePattern = new RegExp(
+    "^(\\d{2})(\\d{2})[-./](\\d{2}|\\d{4})$",
+  );
+  const trDatePattern = new RegExp("^(\\d{1,2})[.-](\\d{1,2})[.-](\\d{4})$");
   const isoDatePattern = new RegExp("^(\\d{4})-(\\d{1,2})-(\\d{1,2})$");
+
+  const normalizeYear = (yearText) => {
+    if (!yearText) return new Date().getFullYear();
+    const year = Number(yearText);
+    return year < 100 ? 2000 + year : year;
+  };
+
+  const makeDate = (year, month, day) => {
+    const date = new Date(year, month - 1, day);
+    if (
+      date.getFullYear() !== year ||
+      date.getMonth() !== month - 1 ||
+      date.getDate() !== day
+    ) {
+      return null;
+    }
+
+    return date;
+  };
 
   if (excelDatePattern.test(raw)) {
     const d = new Date(1899, 11, 30);
@@ -44,14 +67,28 @@ export function parseDate(value) {
     return d;
   }
 
-  const tr = raw.match(trDatePattern);
-  if (tr) {
-    return new Date(Number(tr[3]), Number(tr[2]) - 1, Number(tr[1]));
-  }
-
   const iso = raw.match(isoDatePattern);
   if (iso) {
-    return new Date(Number(iso[1]), Number(iso[2]) - 1, Number(iso[3]));
+    return makeDate(Number(iso[1]), Number(iso[2]), Number(iso[3]));
+  }
+
+  const slash = raw.match(slashDatePattern);
+  if (slash) {
+    return makeDate(normalizeYear(slash[3]), Number(slash[2]), Number(slash[1]));
+  }
+
+  const compactTr = raw.match(compactTrDatePattern);
+  if (compactTr) {
+    return makeDate(
+      normalizeYear(compactTr[3]),
+      Number(compactTr[2]),
+      Number(compactTr[1]),
+    );
+  }
+
+  const tr = raw.match(trDatePattern);
+  if (tr) {
+    return makeDate(Number(tr[3]), Number(tr[2]), Number(tr[1]));
   }
 
   return null;

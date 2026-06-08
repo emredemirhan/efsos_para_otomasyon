@@ -1,8 +1,13 @@
 import { PANEL_ID, STORAGE_TEXT_KEY } from "../config/constants.js";
 import { formatAmountTR, formatDateTR } from "../core/format.js";
-import { inspectTableParse, parseTable } from "../core/tableParser.js";
+import {
+  getPaymentRecords,
+  inspectTableParse,
+  parseTable,
+} from "../core/tableParser.js";
 import { fillExpense } from "../parasut/expenseFlow.js";
-import { $ } from "../parasut/dom.js";
+import { runPayment } from "../parasut/paymentFlow.js";
+import { $, getActiveAppDocument } from "../parasut/dom.js";
 import { removeDuplicatePanels } from "../parasut/frame.js";
 import { getPageDetectionSnapshot } from "../parasut/pageDetection.js";
 import { makePanelDraggable } from "./drag.js";
@@ -10,6 +15,7 @@ import {
   applyMinimizedState,
   createPanelElement,
   setFillButtonLoading,
+  setPayButtonLoading,
   setStatus,
 } from "./view.js";
 import {
@@ -21,10 +27,12 @@ import {
 } from "./storage.js";
 
 let isFilling = false;
+let isRunningPayment = false;
 let lastDecisionLogKey = "";
 let lastParseDebugKey = "";
 let isDataEditorOpen = true;
 let isHelpOpen = false;
+let paymentAwaitingManualSave = false;
 
 function appendDebugLog(event, details = {}) {
   const entry = {
@@ -151,6 +159,30 @@ function getCurrentFlow() {
   return getPageDetectionSnapshot().flow;
 }
 
+function isBusy() {
+  return isFilling || isRunningPayment;
+}
+
+function isPaymentFormOpen() {
+  return Boolean($("[data-tns='add-payment']", getActiveAppDocument()));
+}
+
+function clearPaymentWaitIfFormClosed() {
+  if (paymentAwaitingManualSave && !isPaymentFormOpen()) {
+    paymentAwaitingManualSave = false;
+  }
+}
+
+function getActiveRecords(flow = getCurrentFlow()) {
+  const rows = getRowsFromTextarea();
+
+  if (flow === "payment") {
+    return { kind: "payment", items: getPaymentRecords(rows) };
+  }
+
+  return { kind: "expense", items: rows };
+}
+
 function advanceSelectionAfterSuccessfulFill(currentIndex, rowsLength) {
   if (currentIndex >= rowsLength - 1) return false;
 
@@ -159,11 +191,46 @@ function advanceSelectionAfterSuccessfulFill(currentIndex, rowsLength) {
   return true;
 }
 
+const FLOW_TITLES = {
+  expense: "Gider Doldurucu",
+  payment: "Ödeme Doldurucu",
+  idle: "Gider / Ödeme Doldurucu",
+};
+
+const FLOW_HELP = {
+  expense:
+    "Excel satırlarını kopyalayıp aşağıya yapıştır. Sayfa değişse de veri kalır.<br>" +
+    "<b>Sütunlar:</b> Kişi · Marka · Tutar · Kayıt İsmi<br>" +
+    "Seçili kaydı <b>Ana Gideri Doldur</b> ile forma yazar; kaydetmeyi sen yaparsın.",
+  payment:
+    "Excel satırlarını kopyalayıp aşağıya yapıştır. Sayfa değişse de veri kalır.<br>" +
+    "<b>Ödeme sütunları:</b> Ödeme Tutarı · Ödeme Tarihi · Ödeme Hesabı<br>" +
+    "Birden fazla ödeme için tutar/tarih/hesabı <b>/</b> ile ayır. <b>Ödemeyi Başlat</b> tedarikçiyi bulup ödeme formunu doldurur; son <b>ÖDEME EKLE</b>'ye sen basarsın.",
+  idle:
+    "Excel satırlarını kopyalayıp aşağıya yapıştır. Sayfa değişse de veri kalır.<br>" +
+    "Gider formuna gidince gider, tedarikçi sayfasına gidince ödeme aracı çıkar.",
+};
+
 function updateFlowVisibility(flow = getCurrentFlow()) {
   const expenseActions = $("#ajans-gider-expense-actions");
+  const paymentActions = $("#ajans-gider-payment-actions");
+  const titleText = $("#ajans-gider-title-text");
+  const helpContent = $("#ajans-gider-help-content");
 
   if (expenseActions) {
     expenseActions.style.display = flow === "expense" ? "block" : "none";
+  }
+
+  if (paymentActions) {
+    paymentActions.style.display = flow === "payment" ? "block" : "none";
+  }
+
+  if (titleText) {
+    titleText.textContent = FLOW_TITLES[flow] || FLOW_TITLES.idle;
+  }
+
+  if (helpContent) {
+    helpContent.innerHTML = FLOW_HELP[flow] || FLOW_HELP.idle;
   }
 }
 
@@ -227,7 +294,45 @@ function setStepButtonsState(selectedIndex, rowsLength) {
   }
 }
 
-function renderRecordCard(row, selectedIndex, rowsLength) {
+function renderMetaChips(meta, chips) {
+  if (!meta) return;
+
+  meta.innerHTML = "";
+
+  if (!chips.length) {
+    meta.style.display = "none";
+    return;
+  }
+
+  meta.style.display = "flex";
+  chips.forEach(({ label, tone }) => {
+    const span = document.createElement("span");
+    span.textContent = label;
+    span.style.cssText =
+      tone === "accent"
+        ? `
+          padding:2px 8px;
+          border-radius:999px;
+          background:#e0ecff;
+          color:#0f4fc1;
+          font-size:11px;
+          font-weight:600;
+          line-height:1.6;
+        `
+        : `
+          padding:2px 8px;
+          border-radius:999px;
+          background:#f1f5f9;
+          color:#475569;
+          font-size:11px;
+          font-weight:500;
+          line-height:1.6;
+        `;
+    meta.appendChild(span);
+  });
+}
+
+function renderRecordCard(item, kind, selectedIndex, total) {
   const empty = $("#ajans-gider-empty");
   const record = $("#ajans-gider-record");
   const supplier = $("#ajans-gider-supplier");
@@ -238,7 +343,7 @@ function renderRecordCard(row, selectedIndex, rowsLength) {
 
   if (!empty || !record) return;
 
-  if (!row) {
+  if (!item) {
     empty.hidden = false;
     record.hidden = true;
     return;
@@ -248,85 +353,76 @@ function renderRecordCard(row, selectedIndex, rowsLength) {
   record.hidden = false;
 
   if (supplier) {
-    supplier.textContent = String(row.supplier || "Tedarikçi yok").trim();
-  }
-
-  if (meta) {
-    meta.innerHTML = "";
-
-    const chips = [];
-    const brand = String(row.brand || "").trim();
-    const tag = String(row.tag || "").trim();
-    const rawBrand =
-      row.rawBrand && row.rawBrand !== row.brand
-        ? String(row.rawBrand).trim()
-        : "";
-
-    if (brand) chips.push({ label: brand, tone: "accent" });
-    if (tag) chips.push({ label: tag, tone: "muted" });
-    if (rawBrand) chips.push({ label: `Excel: ${rawBrand}`, tone: "muted" });
-
-    if (!chips.length) {
-      meta.style.display = "none";
-    } else {
-      meta.style.display = "flex";
-      chips.forEach(({ label, tone }) => {
-        const span = document.createElement("span");
-        span.textContent = label;
-        span.style.cssText =
-          tone === "accent"
-            ? `
-              padding:2px 8px;
-              border-radius:999px;
-              background:#e0ecff;
-              color:#0f4fc1;
-              font-size:11px;
-              font-weight:600;
-              line-height:1.6;
-            `
-            : `
-              padding:2px 8px;
-              border-radius:999px;
-              background:#f1f5f9;
-              color:#475569;
-              font-size:11px;
-              font-weight:500;
-              line-height:1.6;
-            `;
-        meta.appendChild(span);
-      });
-    }
+    supplier.textContent = String(item.supplier || "Tedarikçi yok").trim();
   }
 
   if (amount) {
-    amount.textContent = `₺ ${formatAmountTR(row.amount)}`;
+    amount.textContent = `₺ ${formatAmountTR(item.amount)}`;
   }
+
+  if (kind === "payment") {
+    const chips = [];
+    if (item.paymentCount > 1) {
+      chips.push({
+        label: `Ödeme ${item.paymentIndex + 1}/${item.paymentCount}`,
+        tone: "accent",
+      });
+    }
+    renderMetaChips(meta, chips);
+
+    if (dates) {
+      const parts = [];
+      if (item.date) parts.push(`Tarih: ${formatDateTR(item.date)}`);
+      if (item.account) parts.push(`Hesap: ${String(item.account).trim()}`);
+      dates.textContent = parts.join("  ·  ");
+      dates.style.display = parts.length ? "block" : "none";
+    }
+
+    if (title) {
+      const text = String(item.itemName || "").trim();
+      title.textContent = text;
+      title.title = text;
+      title.style.display = text ? "-webkit-box" : "none";
+    }
+
+    setStepButtonsState(selectedIndex, total);
+    return;
+  }
+
+  const chips = [];
+  const brand = String(item.brand || "").trim();
+  const tag = String(item.tag || "").trim();
+  const rawBrand =
+    item.rawBrand && item.rawBrand !== item.brand
+      ? String(item.rawBrand).trim()
+      : "";
+
+  if (brand) chips.push({ label: brand, tone: "accent" });
+  if (tag) chips.push({ label: tag, tone: "muted" });
+  if (rawBrand) chips.push({ label: `Excel: ${rawBrand}`, tone: "muted" });
+  renderMetaChips(meta, chips);
 
   if (dates) {
     const parts = [];
-    if (row.issueDate) parts.push(`Fatura: ${formatDateTR(row.issueDate)}`);
-    if (row.dueDate) parts.push(`Ödeme: ${formatDateTR(row.dueDate)}`);
+    if (item.issueDate) parts.push(`Fatura: ${formatDateTR(item.issueDate)}`);
+    if (item.dueDate) parts.push(`Ödeme: ${formatDateTR(item.dueDate)}`);
     dates.textContent = parts.join("  ·  ");
     dates.style.display = parts.length ? "block" : "none";
   }
 
   if (title) {
-    const text = String(row.title || "").trim();
-    if (text) {
-      title.textContent = text;
-      title.title = text;
-      title.style.display = "-webkit-box";
-    } else {
-      title.textContent = "";
-      title.title = "";
-      title.style.display = "none";
-    }
+    const text = String(item.title || "").trim();
+    title.textContent = text;
+    title.title = text;
+    title.style.display = text ? "-webkit-box" : "none";
   }
 
-  setStepButtonsState(selectedIndex, rowsLength);
+  setStepButtonsState(selectedIndex, total);
 }
 
 function syncPanelRows() {
+  clearPaymentWaitIfFormClosed();
+
   const textarea = $("#ajans-gider-textarea");
   const select = $("#ajans-gider-row-select");
 
@@ -336,65 +432,91 @@ function syncPanelRows() {
   updateFlowVisibility(flow);
   applyHelpState();
 
-  let rows = [];
+  let records = { kind: flow === "payment" ? "payment" : "expense", items: [] };
   let parseError = null;
 
   try {
-    rows = parseTable(textarea.value);
+    records = getActiveRecords(flow);
   } catch (err) {
     parseError = err;
   }
 
-  if (parseError || (String(textarea.value || "").trim() && !rows.length)) {
+  const items = records.items;
+  const kind = records.kind;
+
+  if (parseError || (String(textarea.value || "").trim() && !items.length)) {
     logParseSnapshot("sync-empty", textarea.value);
   }
 
   if (select) {
     select.innerHTML = "";
-    if (rows.length) {
-      rows.forEach((row, index) => {
-        const option = document.createElement("option");
-        option.value = String(index);
+    items.forEach((item, index) => {
+      const option = document.createElement("option");
+      option.value = String(index);
 
-        const supplier = String(row.supplier || "Tedarikçi yok").trim();
-        const shortSupplier =
-          supplier.length > 28 ? `${supplier.slice(0, 28)}…` : supplier;
-        const amountText = `${formatAmountTR(row.amount)} TL`;
+      const supplier = String(item.supplier || "Tedarikçi yok").trim();
+      const shortSupplier =
+        supplier.length > 24 ? `${supplier.slice(0, 24)}…` : supplier;
+      const amountText = `${formatAmountTR(item.amount)} TL`;
+      const suffix =
+        kind === "payment" && item.paymentCount > 1
+          ? `  ·  Öd. ${item.paymentIndex + 1}/${item.paymentCount}`
+          : "";
 
-        option.textContent = `${index + 1} / ${rows.length}  ·  ${shortSupplier}  ·  ${amountText}`;
-        select.appendChild(option);
-      });
-    }
+      option.textContent = `${index + 1} / ${items.length}  ·  ${shortSupplier}  ·  ${amountText}${suffix}`;
+      select.appendChild(option);
+    });
   }
 
-  setDataSummary(rows.length);
+  setDataSummary(items.length);
   applyDataEditorState();
 
   if (parseError) {
-    renderRecordCard(null, 0, 0);
-    setStatus(String(parseError.message || parseError), true);
+    renderRecordCard(null, kind, 0, 0);
+    if (!isBusy()) setStatus(String(parseError.message || parseError), true);
     return;
   }
 
-  if (!rows.length) {
-    renderRecordCard(null, 0, 0);
+  if (!items.length) {
+    renderRecordCard(null, kind, 0, 0);
+    if (isBusy()) return;
+
     if (flow === "expense") {
       setStatus("Gider formundasın. Veri yapıştırınca doldurulur.");
+    } else if (flow === "payment") {
+      const hasText = String(textarea.value || "").trim().length > 0;
+      setStatus(
+        hasText
+          ? "Ödeme kaydı yok. Excel'e Ödeme Tutarı / Tarihi / Hesabı sütunlarını ekle."
+          : "Tedarikçiler sayfasındasın. Excel'i yapıştırınca ödemeleri başlatabilirsin.",
+      );
     } else {
       setStatus("");
     }
     return;
   }
 
-  const selectedIndex = getSelectedIndex(rows.length);
+  const selectedIndex = getSelectedIndex(items.length);
   if (select) select.value = String(selectedIndex);
 
-  renderRecordCard(rows[selectedIndex], selectedIndex, rows.length);
+  renderRecordCard(items[selectedIndex], kind, selectedIndex, items.length);
+
+  if (isBusy()) return;
 
   if (flow === "expense") {
     setStatus("");
+  } else if (flow === "payment") {
+    if (paymentAwaitingManualSave && isPaymentFormOpen()) {
+      setStatus(
+        'Ödeme formu açık. Kontrol edip Paraşüt içindeki son "ÖDEME EKLE" butonuna manuel bas; form kapandıktan sonra › ile devam et.',
+        "success",
+      );
+      return;
+    }
+
+    setStatus("");
   } else {
-    setStatus("Yeni gider formuna gidince bu kaydı doldurabilirsin.");
+    setStatus("Gider formu veya tedarikçi sayfasına gidince bu kaydı kullanabilirsin.");
   }
 }
 
@@ -481,20 +603,20 @@ function registerPanelEvents(panel) {
   }
 
   $("#ajans-gider-prev").addEventListener("click", () => {
-    const rows = getRowsFromTextarea();
-    if (!rows.length) return;
+    const count = getActiveRecords().items.length;
+    if (!count) return;
 
-    const current = getSelectedIndex(rows.length);
+    const current = getSelectedIndex(count);
     setSelectedIndex(Math.max(0, current - 1));
     syncPanelRows();
   });
 
   $("#ajans-gider-next").addEventListener("click", () => {
-    const rows = getRowsFromTextarea();
-    if (!rows.length) return;
+    const count = getActiveRecords().items.length;
+    if (!count) return;
 
-    const current = getSelectedIndex(rows.length);
-    setSelectedIndex(Math.min(rows.length - 1, current + 1));
+    const current = getSelectedIndex(count);
+    setSelectedIndex(Math.min(count - 1, current + 1));
     syncPanelRows();
   });
 
@@ -540,6 +662,50 @@ function registerPanelEvents(panel) {
     } finally {
       isFilling = false;
       setFillButtonLoading(button, false);
+    }
+  });
+
+  $("#ajans-gider-pay").addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+
+    if (isRunningPayment) return;
+    isRunningPayment = true;
+    setPayButtonLoading(button, true);
+
+    try {
+      clearPaymentWaitIfFormClosed();
+
+      if (paymentAwaitingManualSave && isPaymentFormOpen()) {
+        throw new Error(
+          'Açık ödeme formu var. Önce kontrol edip Paraşüt içindeki son "ÖDEME EKLE" butonuna manuel bas, form kapandıktan sonra sonraki ödemeye geç.',
+        );
+      }
+
+      const records = getActiveRecords("payment").items;
+      if (!records.length) {
+        throw new Error(
+          "Ödeme kaydı bulunamadı. Excel'e Ödeme Tutarı / Tarihi / Hesabı sütunlarını ekledin mi?",
+        );
+      }
+
+      const index = getSelectedIndex(records.length);
+      const record = records[index];
+
+      setStatus(`${index + 1}. ödeme işleniyor...`);
+
+      await runPayment(record, (message) => setStatus(message));
+      paymentAwaitingManualSave = true;
+
+      setStatus(
+        `Ödeme formu dolduruldu (${index + 1}/${records.length}). Kontrol edip "ÖDEME EKLE"ye bas, sonra › ile sonraki ödemeye geç.`,
+        "success",
+      );
+    } catch (err) {
+      console.error("[AJANS] Ödeme hatası:", err);
+      setStatus(err.message || String(err), true);
+    } finally {
+      isRunningPayment = false;
+      setPayButtonLoading(button, false);
     }
   });
 
@@ -606,6 +772,7 @@ export function ensurePanelForCurrentPage(reason = "refresh") {
   }
 
   if (flow === "idle") {
+    if (isBusy()) return flow;
     removePanel("idle-flow", snapshot);
     return flow;
   }

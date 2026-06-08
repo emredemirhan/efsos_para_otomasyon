@@ -20,30 +20,30 @@ Kurulum adımları:
 4. Paraşüt'e girip yeni gider formunu aç.
 5. Panel otomatik görünür; Excel satırlarını panele yapıştırıp `Ana Gideri Doldur` ile kullan.
 
-Bu link açıldığında Tampermonkey kurulum ekranı gelir. Güncelleme yayınlamak için sürümü artırıp tekrar build alarak aynı repo'ya pushlamak yeterlidir.
+Bu link açıldığında Tampermonkey kurulum ekranı gelir. Güncelleme yayınlamak için sürümü artırıp tekrar build alarak aynı repo'ya pushlamak gerekir.
 
 Yeni kullanıcıya son geliştirme halini kurdurmak için değişikliklerin GitHub'daki
 `main` branch'ine pushlanmış olması gerekir. Kurulum linki her zaman
 `main/dist/parasut.user.js` dosyasını indirir; localde kalmış değişiklikler
 karşı tarafa gitmez.
 
-## Otomatik Yayınlama
+## Yayınlama ve Güncelleme
 
-`main` branch'ine `src/`, `scripts/`, `tests/` veya paket dosyalarında değişiklik pushlanınca GitHub Actions otomatik olarak:
+`main` branch'ine `src/`, `scripts/`, `tests/`, paket dosyaları veya workflow değişiklikleri pushlanınca GitHub Actions sadece doğrulama yapar:
 
 - bağımlılıkları kurar,
 - testleri çalıştırır,
-- patch versiyonu artırır,
-- `dist/parasut.user.js` dosyasını yeniden build eder,
-- `package.json`, `package-lock.json` ve `dist/parasut.user.js` değişikliklerini `chore: build userscript [skip ci]` commit'iyle `main` branch'ine pushlar.
+- `dist/parasut.user.js` dosyasını yeniden build edebilirliğini kontrol eder.
 
-Bu commit GitHub'a düştükten sonra Tampermonkey `@version` değiştiğini görür ve karşı taraf manuel `Update` dediğinde yeni sürümü çeker.
+Actions repo'ya commit atmaz, versiyon artırmaz ve `dist/` çıktısını pushlamaz. Yayınlanacak userscript dosyası localde üretilip commitlenmelidir. Tampermonkey güncellemesi için `@version` değişmelidir; bu değer `package.json` versiyonundan build sırasında yazılır.
 
 Lokalden aynı işlemi tek komutla yapmak gerekirse:
 
 ```bash
 npm run release:patch
 ```
+
+Bu komut testleri çalıştırır, patch versiyonunu artırır ve `dist/parasut.user.js` dosyasını yeniden üretir. Sonrasında `package.json`, `package-lock.json` ve `dist/parasut.user.js` birlikte commitlenip `main` branch'ine pushlanır.
 
 Geliştirme sonrası userscript çıktısını üretmek için:
 
@@ -80,9 +80,15 @@ src/
     dropdowns.js       # kategori/etiket dropdown seçimi
     supplier.js        # tedarikçi autocomplete akışı
     expenseFlow.js     # ana gider formu doldurma akışı
+    paymentFlow.js     # tedarikçi ödemesi otomasyonu (ara/aç/eşleştir/doldur)
+    datepicker.js      # pikaday (yeni ve eski Paraşüt UI) tarih seçimi
   panel/
-    view.js            # panel HTML'i ve buton loading state'leri
-    controller.js      # panel eventleri, preview, flow görünürlüğü
+    view.js            # geriye uyumlu re-export shim
+    controller.js      # panel eventleri, preview, flow görünürlüğü, ödeme kilidi
+    panelTemplate.js   # panel HTML'i
+    panelState.js      # status ve loading state'leri
+    panelHover.js      # hover stilleri
+    panelTheme.js      # panel renkleri
     storage.js         # panel pozisyonu, seçimler, minimize state
     drag.js            # panel sürükleme davranışı
 tests/
@@ -96,12 +102,22 @@ dist/
 
 ## Flow Ayrımı
 
-Panel yalnızca Paraşüt yeni gider formunda çalışır:
+Panel iki akışta çalışır; veri her iki akış için aynı `localStorage` metnini kullanır:
 
-- Gider formu sayfasında sadece `Ana Gideri Doldur` görünür.
-- Diğer sayfalarda popup tamamen gizlenir; veri `localStorage` içinde korunur.
+- **Gider akışı** (`flow: "expense"`): Yeni gider formu sayfasında (`/fis-faturalar/yeni`) sadece `Ana Gideri Doldur` görünür.
+- **Ödeme akışı** (`flow: "payment"`): Tedarikçiler listesi (`/tedarikciler`), tedarikçi detayı (`/tedarikciler/{id}`) ve gider/fiş detayı (`/fis-faturalar/{id}`) sayfalarında `Ödemeyi Başlat` görünür.
+- Diğer sayfalarda popup gizlenir; veri korunur.
 
-Bu ayrım `src/panel/controller.js` içindeki `getCurrentFlow()` ve `updateFlowVisibility()` üzerinden yönetilir.
+Akış ve sayfa tespiti `src/parasut/pageDetection.js` (`flow`, `paymentStage`) ile, görünürlük `src/panel/controller.js` içindeki `getCurrentFlow()` ve `updateFlowVisibility()` ile yönetilir.
+
+`Ödemeyi Başlat` tek satır için: tedarikçiyi arar/açar, gider kalemini ada göre eşleştirip açar, sidebar'daki ilk `Ödeme Ekle` butonuna basarak ödeme formunu açar ve tarih/hesap/meblağ/açıklama alanlarını doldurur.
+
+Ödeme akışı kasıtlı olarak yarı otomatiktir:
+
+- Otomasyon Paraşüt içindeki son `ÖDEME EKLE` / kaydet butonuna asla basmaz.
+- Kullanıcı formu kontrol eder ve gerçek ödemeyi ekleyen son `ÖDEME EKLE` butonuna manuel basar.
+- Form kapanmadan yeni ödeme başlatılmaz; açık form varken panel kullanıcıdan önce manuel kaydetmesini ister.
+- Sonraki ödemeye geçmek için kayıttan sonra panelde `›` kullanılır.
 
 ## Veri Formatı
 
@@ -117,6 +133,19 @@ Header varsa tanınan örnek kolonlar:
 - `Fiş/Fatura Tarihi` / `Fatura Tarihi` / `Tarih`
 - `Ödeneceği Tarih` / `Ödeme Tarihi`
 - `Etiket` / `Tag`
+- `Ödeme Tutarı` / `Ödeme Hesabı` (ödeme akışı için ek sütunlar)
+
+### Ödeme Sütunları
+
+Aynı Excel'e 3 ek sütun eklenerek ödeme akışı çalıştırılır:
+
+- `Ödeme Tutarı`: Tek ödeme tutarı veya birden fazla ödeme için `/` ile ayrılmış tutarlar (`30.000,00 / 52.750,00`).
+- `Ödeme Tarihi`: Tek tarih (tüm ödemelere uygulanır) veya `/` ile ayrılmış tarihler.
+- `Ödeme Hesabı`: Tek hesap (tüm ödemelere uygulanır) veya `/` ile ayrılmış hesap adları.
+
+Ödeme tarihi Türkçe gün/ay olarak okunur. `06/05/2026`, `06/05` ve `0605-2026` değerleri 6 Mayıs anlamına gelir; `05.06.2026` ise 5 Haziran anlamına gelir.
+
+Eşleştirme anahtarı ve ödeme açıklaması olarak gider kalemi adı (`Kayıt İsmi`) kullanılır. Headersız kullanımda 4 sütunlu gider formatına bu 3 sütun eklenince 7 sütunlu (`KİŞİ, MARKA, KALEM TUTARI, KAYIT İSMİ, ÖDEME TUTARI, ÖDEME TARİHİ, ÖDEME HESABI`), 5 sütunlu legacy formata eklenince 8 sütunlu format otomatik tanınır.
 
 Header yoksa varsayılan sıra:
 
