@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Parasut Gider Formu Excel Doldurucu
 // @namespace    ajans-parasut
-// @version      1.2.16
+// @version      1.2.21
 // @description  Excel satırlarından gider formunu doldurur ve tedarikçi ödemelerini yarı otomatik girer
 // @match        https://uygulama.parasut.com/*
 // @exclude      https://uygulama.parasut.com/*render_trinity_iframe=true*
@@ -125,9 +125,15 @@
     "gider_tutari",
     "ana_gider_tutari",
     "kisi",
+    "calisan",
+    "calisan_adi",
+    "personel",
+    "personel_adi",
     "tedarikci",
     "tedarikci_kisi",
     "kayit_ismi",
+    "maas_kaydi",
+    "maas_kayit_ismi",
     "kayit_kalemi",
     "aciklama",
     "kalem",
@@ -137,16 +143,122 @@
     "gider_kategorisi",
     "fis_fatura_tarihi",
     "fatura_tarihi",
+    "hak_edis_tarihi",
+    "hakedis_tarihi",
     "odenecegi_tarih",
     "odeme_tarihi",
     "etiket",
+    "maas_tutari",
+    "hak_edis_tutari",
+    "hakedis_tutari",
     "odeme_tutari",
     "odeme_tutarlari",
     "odeme",
+    "odeme_aciklamasi",
+    "odeme_aciklamalari",
+    "maas_odeme_tarihi",
+    "maas_odeme_hesabi",
+    "maas_odeme_tutari",
+    "maas_odeme_aciklamasi",
+    "maas_odeme_aciklamalari",
+    "ana_maas_odeme_tarihi",
+    "ana_maas_odeme_hesabi",
+    "ana_maas_odeme_tutari",
+    "ana_maas_odeme_aciklamasi",
+    "ana_odeme_tarihi",
+    "ana_odeme_hesabi",
+    "ana_odeme_tutari",
+    "ana_odeme_aciklamasi",
+    "standart_maas_odeme_tarihi",
+    "standart_maas_odeme_hesabi",
+    "standart_maas_odeme_tutari",
+    "standart_maas_odeme_aciklamasi",
+    "bes_odeme_tarihi",
+    "bes_odeme_hesabi",
+    "bes_odeme_tutari",
+    "bes_odeme_aciklamasi",
+    "bireysel_emeklilik_odeme_tarihi",
+    "bireysel_emeklilik_odeme_hesabi",
+    "bireysel_emeklilik_odeme_tutari",
+    "bireysel_emeklilik_odeme_aciklamasi",
+    "bireysel_emeklilik_tarihi",
+    "bireysel_emeklilik_hesabi",
+    "bireysel_emeklilik_tutari",
+    "bireysel_emeklilik_aciklamasi",
+    "kalan_maas_odeme_tarihi",
+    "kalan_maas_odeme_hesabi",
+    "kalan_maas_odeme_tutari",
+    "kalan_maas_odeme_aciklamasi",
+    "kalan_odeme_tarihi",
+    "kalan_odeme_hesabi",
+    "kalan_odeme_tutari",
+    "kalan_odeme_aciklamasi",
     "odeme_hesabi",
     "odeme_hesaplari",
     "cikis_hesabi",
     "hesap"
+  ];
+  var SALARY_PAYMENT_GROUPS = [
+    {
+      label: "Ana Maa\u015F",
+      dateKeys: [
+        "ana_maas_odeme_tarihi",
+        "ana_odeme_tarihi",
+        "standart_maas_odeme_tarihi",
+        "maas_odeme_tarihi"
+      ],
+      accountKeys: [
+        "ana_maas_odeme_hesabi",
+        "ana_odeme_hesabi",
+        "standart_maas_odeme_hesabi",
+        "maas_odeme_hesabi"
+      ],
+      amountKeys: [
+        "ana_maas_odeme_tutari",
+        "ana_odeme_tutari",
+        "standart_maas_odeme_tutari",
+        "maas_odeme_tutari"
+      ],
+      descriptionKeys: [
+        "ana_maas_odeme_aciklamasi",
+        "ana_odeme_aciklamasi",
+        "standart_maas_odeme_aciklamasi",
+        "maas_odeme_aciklamasi"
+      ]
+    },
+    {
+      label: "BES",
+      dateKeys: [
+        "bes_odeme_tarihi",
+        "bireysel_emeklilik_odeme_tarihi",
+        "bireysel_emeklilik_tarihi"
+      ],
+      accountKeys: [
+        "bes_odeme_hesabi",
+        "bireysel_emeklilik_odeme_hesabi",
+        "bireysel_emeklilik_hesabi"
+      ],
+      amountKeys: [
+        "bes_odeme_tutari",
+        "bireysel_emeklilik_odeme_tutari",
+        "bireysel_emeklilik_tutari"
+      ],
+      descriptionKeys: [
+        "bes_odeme_aciklamasi",
+        "bireysel_emeklilik_odeme_aciklamasi",
+        "bireysel_emeklilik_aciklamasi"
+      ]
+    },
+    {
+      label: "Kalan Maa\u015F",
+      dateKeys: ["kalan_maas_odeme_tarihi", "kalan_odeme_tarihi"],
+      accountKeys: ["kalan_maas_odeme_hesabi", "kalan_odeme_hesabi"],
+      amountKeys: ["kalan_maas_odeme_tutari", "kalan_odeme_tutari"],
+      descriptionKeys: [
+        "kalan_maas_odeme_aciklamasi",
+        "kalan_odeme_aciklamasi"
+      ]
+    }
   ];
   function pick(obj, keys) {
     for (const key of keys) {
@@ -159,24 +271,45 @@
   function splitSlash(value) {
     return String(value || "").split("/").map((part) => part.trim()).filter((part) => part !== "");
   }
-  function buildPayments({ amountRaw, dateRaw, accountRaw, description }) {
+  function buildPayments({ amountRaw, dateRaw, accountRaw, descriptionRaw, description }) {
     const amounts = splitSlash(amountRaw);
     if (!amounts.length) return [];
     const isMulti = amounts.length > 1;
     const dates = isMulti ? splitSlash(dateRaw) : [String(dateRaw || "").trim()].filter(Boolean);
     const accounts = isMulti ? splitSlash(accountRaw) : [String(accountRaw || "").trim()].filter(Boolean);
+    const descriptions = isMulti ? splitSlash(descriptionRaw) : [String(descriptionRaw || "").trim()].filter(Boolean);
     return amounts.map((amount, index) => {
       const dateText = dates[index] ?? dates[0] ?? "";
       const accountText = accounts[index] ?? accounts[0] ?? "";
+      const descriptionText = descriptions[index] ?? descriptions[0] ?? description;
       return {
         amount,
         amountNumber: parseAmount(amount),
         dateText,
         date: parseDate(dateText),
         account: accountText,
-        description
+        description: descriptionText
       };
     });
+  }
+  function buildSalaryPayments(raw, fallbackDescription) {
+    return SALARY_PAYMENT_GROUPS.map((group) => {
+      const amount = pick(raw, group.amountKeys);
+      const amountNumber = parseAmount(amount);
+      if (!amountNumber) return null;
+      const dateText = pick(raw, group.dateKeys);
+      const account = pick(raw, group.accountKeys);
+      const description = pick(raw, group.descriptionKeys) || fallbackDescription;
+      return {
+        kind: group.label,
+        amount,
+        amountNumber,
+        dateText,
+        date: parseDate(dateText),
+        account,
+        description
+      };
+    }).filter(Boolean);
   }
   function detectFormat(rows, mutateRows = false) {
     if (!rows.length) {
@@ -274,10 +407,17 @@
       "tutar",
       "toplam_tutar",
       "toplam",
+      "maas_tutari",
+      "hak_edis_tutari",
+      "hakedis_tutari",
       "amount"
     ]);
     const supplier = pick(raw, [
       "kisi",
+      "calisan",
+      "calisan_adi",
+      "personel",
+      "personel_adi",
       "tedarikci",
       "tedarikci_adi",
       "tedarikci_kisi",
@@ -285,6 +425,8 @@
     ]);
     const title = pick(raw, [
       "kayit_ismi",
+      "maas_kaydi",
+      "maas_kayit_ismi",
       "kayit_kalemi",
       "kayit",
       "aciklama",
@@ -296,6 +438,8 @@
     const brand = pick(raw, ["marka", "kategori", "gider_kategorisi"]);
     const tag = pick(raw, ["etiket", "tag"]);
     const issueDateRaw = pick(raw, [
+      "hak_edis_tarihi",
+      "hakedis_tarihi",
       "fis_fatura_tarihi",
       "fatura_tarihi",
       "tarih"
@@ -313,12 +457,21 @@
       "cikis_hesabi",
       "hesap"
     ]);
+    const explicitPaymentDescription = pick(raw, [
+      "odeme_aciklamasi",
+      "odeme_aciklamalari",
+      "maas_odeme_aciklamasi",
+      "maas_odeme_aciklamalari"
+    ]);
+    const paymentDescriptionRaw = explicitPaymentDescription || (raw.kayit_ismi && raw.aciklama ? raw.aciklama : "");
     const payments = buildPayments({
       amountRaw: paymentAmountRaw,
       dateRaw: paymentDateRaw,
       accountRaw: paymentAccountRaw,
+      descriptionRaw: paymentDescriptionRaw,
       description: title
     });
+    const salaryPayments = buildSalaryPayments(raw, title);
     return {
       raw,
       row: {
@@ -328,9 +481,12 @@
         brand,
         rawBrand: brand,
         tag,
+        issueDateText: issueDateRaw,
+        dueDateText: dueDateRaw,
         issueDate: parseDate(issueDateRaw) || /* @__PURE__ */ new Date(),
         dueDate: parseDate(dueDateRaw) || nextPaymentDate(),
-        payments
+        payments,
+        salaryPayments
       }
     };
   }
@@ -405,6 +561,47 @@
       });
     });
     return records;
+  }
+  function getSalaryPaymentRecords(text) {
+    const rows = Array.isArray(text) ? text : parseTable(text);
+    const records = [];
+    rows.forEach((row, rowIndex) => {
+      const payments = Array.isArray(row.salaryPayments) ? row.salaryPayments : [];
+      payments.forEach((payment, paymentIndex) => {
+        records.push({
+          employee: row.supplier,
+          salaryTitle: row.title,
+          paymentKind: payment.kind,
+          description: payment.description || row.title,
+          amount: payment.amount,
+          amountNumber: payment.amountNumber,
+          date: payment.date,
+          dateText: payment.dateText,
+          account: payment.account,
+          rowIndex,
+          paymentIndex,
+          paymentCount: payments.length
+        });
+      });
+    });
+    return records;
+  }
+  function getSalaryRecords(text) {
+    const rows = Array.isArray(text) ? text : parseTable(text);
+    return rows.map((row, rowIndex) => ({
+      employee: row.supplier,
+      title: row.title,
+      amount: row.amount,
+      amountNumber: parseAmount(row.amount),
+      entitlementDate: row.issueDate,
+      entitlementDateText: row.issueDateText,
+      dueDate: row.dueDate,
+      dueDateText: row.dueDateText,
+      category: "maa\u015F",
+      rowIndex
+    })).filter(
+      (record) => record.employee && record.title && record.amountNumber && record.entitlementDateText && record.dueDateText
+    );
   }
   function inspectTableParse(text) {
     const source = String(text || "");
@@ -932,7 +1129,7 @@
   function getTrinityIframePathnames() {
     return $$("iframe[name='trinity-iframe'], iframe[data-type='trinity']").map((iframe) => getWindowPathname(iframe.contentWindow)).filter(Boolean);
   }
-  var RELEVANT_ROUTE_PATTERN = /\/(?:fis-faturalar|tedarikciler)(?:\/|$)/;
+  var RELEVANT_ROUTE_PATTERN = /\/(?:fis-faturalar|tedarikciler|calisanlar|maaslar|salaries)(?:\/|$)/;
   function getAppPathname() {
     const currentPathname = getWindowPathname(window);
     const topPathname = getWindowPathname(window.top);
@@ -948,7 +1145,23 @@
   function matchesExpenseFormPath(pathname) {
     return /\/fis-faturalar\/yeni(?:\/hizli)?\/?$/.test(pathname);
   }
+  function getCandidateDocuments(primaryRoot = getActiveAppDocument()) {
+    const roots = [primaryRoot, document];
+    try {
+      if (window.top?.document) roots.push(window.top.document);
+    } catch {
+    }
+    return roots.filter((root, index) => root && roots.indexOf(root) === index);
+  }
+  function getPageEventValue(root) {
+    for (const candidate of getCandidateDocuments(root)) {
+      const value = $("input[data-tid='page'][data-ttype='event']", candidate)?.value || $("input[data-tid='page']", candidate)?.value || "";
+      if (value) return value;
+    }
+    return "";
+  }
   function classifyPaymentStage(pathname, root) {
+    if (/\/calisanlar(?:\/|$)/.test(pathname)) return null;
     if (/\/fis-faturalar\/\d+/.test(pathname) && !matchesExpenseFormPath(pathname)) {
       return "bill";
     }
@@ -961,6 +1174,19 @@
     if (/\/tedarikciler\/?$/.test(pathname)) return "suppliers";
     return null;
   }
+  function classifySalaryStage(pathname, root) {
+    const pageValue = getPageEventValue(root);
+    if (pageValue === "salaries.new") return "salary-form";
+    if (pageValue === "salaries.show") return "salary-detail";
+    if (pageValue === "employees.show") return "employee-detail";
+    if (pageValue === "employees.index") return "employees";
+    if (/\/(?:maaslar|salaries)\/\d+/.test(pathname)) return "salary-detail";
+    if (/\/calisanlar\/\d+/.test(pathname)) return "employee-detail";
+    if ($("[data-tns='employee-show']", root)) return "employee-detail";
+    if ($("[data-tns='employee-index']", root)) return "employees";
+    if (/\/calisanlar\/?$/.test(pathname)) return "employees";
+    return null;
+  }
   function getPageDetectionSnapshot(root = getActiveAppDocument()) {
     const pathname = getAppPathname();
     const hasRecordId = Boolean(
@@ -968,9 +1194,11 @@
     );
     const hasPurchaseBillShow = Boolean($("[data-tns='purchase-bills-show']", root));
     const isExpense = matchesExpenseFormPath(pathname);
-    const paymentStage = isExpense ? null : classifyPaymentStage(pathname, root);
+    const salaryStage = isExpense ? null : classifySalaryStage(pathname, root);
+    const paymentStage = isExpense || salaryStage ? null : classifyPaymentStage(pathname, root);
     let flow = "idle";
     if (isExpense) flow = "expense";
+    else if (salaryStage) flow = "salary";
     else if (paymentStage) flow = "payment";
     return {
       href: location.href,
@@ -983,6 +1211,7 @@
       hasPurchaseBillShow,
       isExpense,
       paymentStage,
+      salaryStage,
       flow
     };
   }
@@ -991,6 +1220,9 @@
   }
   function getPaymentStage() {
     return getPageDetectionSnapshot().paymentStage;
+  }
+  function getSalaryStage() {
+    return getPageDetectionSnapshot().salaryStage;
   }
 
   // src/parasut/supplier.js
@@ -1517,6 +1749,430 @@
     await fillPaymentForm(record);
   }
 
+  // src/parasut/salaryFlow.js
+  var RECORD_NAME_LABELS = ["KAYIT \u0130SM\u0130", "KAYIT ADI", "A\xC7IKLAMA"];
+  var ENTITLEMENT_DATE_LABELS = ["HAK ED\u0130\u015E TAR\u0130H\u0130", "HAKED\u0130\u015E TAR\u0130H\u0130"];
+  var DUE_DATE_LABELS2 = ["\xD6DENECE\u011E\u0130 TAR\u0130H", "\xD6DEME TAR\u0130H\u0130", "VADE TAR\u0130H\u0130"];
+  var AMOUNT_LABELS = ["TOPLAM TUTAR", "GENEL TOPLAM", "TUTAR"];
+  var SALARY_PAYMENT_FORM_SELECTOR = "[class*='salary'][class*='payment-widget'], [class*='payment-widget-cash']";
+  function textMatches2(candidate, wanted) {
+    const a = norm(candidate);
+    const b = norm(wanted);
+    if (!a || !b) return false;
+    return a === b || a.includes(b) || b.includes(a);
+  }
+  function findByText2(elements, wanted) {
+    const target = norm(wanted);
+    return elements.find((el) => norm(elementText(el)) === target) || elements.find((el) => norm(elementText(el)).includes(target)) || elements.find((el) => target.includes(norm(elementText(el)))) || null;
+  }
+  function hrefPath2(anchor) {
+    return (anchor.getAttribute("href") || "").split("#")[0].split("?")[0];
+  }
+  function pickAnchorByText2(anchors, wanted, labelSelector) {
+    const target = norm(wanted);
+    const textOf = (anchor) => {
+      const label = labelSelector ? anchor.querySelector(labelSelector) : null;
+      return norm(elementText(label || anchor));
+    };
+    return anchors.find((a) => textOf(a) === target) || anchors.find((a) => textOf(a).includes(target)) || anchors.find((a) => target.includes(textOf(a))) || null;
+  }
+  function clickLink2(el) {
+    if (!el) return;
+    const view = el.ownerDocument?.defaultView || window;
+    const jq = view.Ember && view.Ember.$ || view.jQuery || view.$;
+    if (jq) {
+      try {
+        jq(el).trigger("click");
+        return;
+      } catch (err) {
+        console.warn("[AJANS] jQuery t\u0131klamas\u0131 ba\u015Far\u0131s\u0131z, native'e d\xFC\u015F\xFCl\xFCyor:", err);
+      }
+    }
+    const opts = { bubbles: true, cancelable: true, view, button: 0 };
+    try {
+      el.dispatchEvent(new view.MouseEvent("mousedown", opts));
+      el.dispatchEvent(new view.MouseEvent("mouseup", opts));
+    } catch {
+    }
+    el.click();
+  }
+  function nativeClick(el) {
+    if (!el) return;
+    const view = el.ownerDocument?.defaultView || window;
+    const opts = { bubbles: true, cancelable: true, view, button: 0 };
+    try {
+      el.dispatchEvent(new view.MouseEvent("mousedown", opts));
+      el.dispatchEvent(new view.MouseEvent("mouseup", opts));
+    } catch {
+    }
+    el.click();
+  }
+  function describeElement2(el) {
+    if (!el) return null;
+    return {
+      tag: el.tagName,
+      id: el.id || "",
+      className: String(el.className || ""),
+      text: elementText(el).slice(0, 120),
+      type: el.getAttribute?.("type") || ""
+    };
+  }
+  function isSalaryPaymentSaveControl(target, form) {
+    const control = target?.closest?.("button, input[type='submit'], a");
+    if (!control || !form.contains(control)) return false;
+    const text = norm(elementText(control) || control.value || "");
+    return text === "\xD6DEME EKLE";
+  }
+  function installSalaryPaymentSubmitGuard(form) {
+    const doc = form.ownerDocument || document;
+    const logClick = (event) => {
+      const control = event.target?.closest?.("a, button, input");
+      if (!control || !form.contains(control)) return;
+      console.info("[AJANS][salary-payment-click]", {
+        control: describeElement2(control),
+        defaultPrevented: event.defaultPrevented
+      });
+    };
+    const blockSubmit = (event) => {
+      if (event.target === form || form.contains(event.target)) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        console.warn("[AJANS] Maa\u015F \xF6deme otomasyonu kaydetme i\u015Flemini engelledi.");
+      }
+    };
+    const blockSaveClick = (event) => {
+      if (!isSalaryPaymentSaveControl(event.target, form)) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      console.warn("[AJANS] Otomasyon son \xD6DEME EKLE butonuna basmad\u0131.");
+    };
+    doc.addEventListener("click", logClick, true);
+    doc.addEventListener("submit", blockSubmit, true);
+    doc.addEventListener("click", blockSaveClick, true);
+    return () => {
+      doc.removeEventListener("click", logClick, true);
+      doc.removeEventListener("submit", blockSubmit, true);
+      doc.removeEventListener("click", blockSaveClick, true);
+    };
+  }
+  async function withSalaryPaymentSubmitGuard(form, action) {
+    const releaseGuard = installSalaryPaymentSubmitGuard(form);
+    try {
+      const result = await action();
+      await sleep(800);
+      return result;
+    } finally {
+      releaseGuard();
+    }
+  }
+  function getSearchRoots() {
+    const roots = [getActiveAppDocument(), document];
+    try {
+      if (window.top?.document) roots.push(window.top.document);
+    } catch {
+    }
+    return roots.filter((root, index) => root && roots.indexOf(root) === index);
+  }
+  function getEmployeeHeaderName() {
+    const root = getActiveAppDocument();
+    const el = $("[data-test-contact-show-header-name]", root) || $("[data-test-display-name]", root);
+    return el ? elementText(el) : "";
+  }
+  function getEmployeesSearchInput() {
+    const root = getActiveAppDocument();
+    return $("[data-test-search-box] input", root) || $$("input[placeholder='Ara...']", root).find(isVisible) || null;
+  }
+  function findEmployeesNavLink() {
+    const roots = [getActiveAppDocument(), document];
+    try {
+      if (window.top && window.top.document) roots.push(window.top.document);
+    } catch {
+    }
+    for (const root of roots) {
+      let link = null;
+      try {
+        link = $$("a[href*='/calisanlar']", root).find((anchor) => {
+          const href = (anchor.getAttribute("href") || "").split("#")[0];
+          return /\/calisanlar(?:\?|$)/.test(href);
+        });
+      } catch {
+        link = null;
+      }
+      if (link) return link;
+    }
+    return null;
+  }
+  async function goToEmployeesList() {
+    const isReady = () => getSalaryStage() === "employees" && Boolean(getEmployeesSearchInput());
+    if (isReady()) return;
+    for (let attempt = 0; attempt < 4; attempt++) {
+      const navLink = findEmployeesNavLink();
+      if (navLink) clickLink2(navLink);
+      const reached = await waitFor(isReady, 4e3).catch(() => null);
+      if (reached) return;
+    }
+    throw new Error("\xC7al\u0131\u015Fanlar sayfas\u0131na gidilemedi.");
+  }
+  function findEmployeeRowLink(employeeName) {
+    const root = getActiveAppDocument();
+    const detailLinks = $$("a[href]", root).filter(
+      (a) => /\/calisanlar\/\d+/.test(hrefPath2(a)) && isVisible(a)
+    );
+    const byHref = pickAnchorByText2(
+      detailLinks,
+      employeeName,
+      "[data-test-display-name]"
+    );
+    if (byHref) return byHref;
+    const names = $$("[data-test-display-name]", root).filter(isVisible);
+    const target = findByText2(names, employeeName);
+    return target ? target.closest("a[href]") || target.closest("a") : null;
+  }
+  async function searchAndOpenEmployee(employeeName) {
+    const search = await waitFor(() => getEmployeesSearchInput(), 8e3);
+    setNativeValue(search, employeeName, { blur: false });
+    await sleep(400);
+    search.focus();
+    sendKey(search, "Enter");
+    const link = await waitFor(() => findEmployeeRowLink(employeeName), 9e3).catch(
+      () => null
+    );
+    if (!link) throw new Error(`\xC7al\u0131\u015Fan bulunamad\u0131: ${employeeName}`);
+    clickLink2(link);
+    await waitFor(
+      () => getSalaryStage() === "employee-detail" || Boolean(findMoreMenuTrigger()) || textMatches2(getEmployeeHeaderName(), employeeName),
+      12e3
+    );
+    await waitFor(
+      () => textMatches2(getEmployeeHeaderName(), employeeName),
+      1500
+    ).catch(() => null);
+  }
+  function findVisibleActionContaining(text, options = {}) {
+    const wanted = norm(text);
+    const selector = options.selector || "button, a";
+    const roots = options.roots || [options.root || getActiveAppDocument()];
+    for (const root of roots) {
+      const found = $$(selector, root).filter(isVisible).find((el) => norm(elementText(el)).includes(wanted));
+      if (found) return found;
+    }
+    return null;
+  }
+  function findSalaryPaymentWidget() {
+    const root = getActiveAppDocument();
+    const candidates = $$(SALARY_PAYMENT_FORM_SELECTOR, root).filter(isVisible);
+    return candidates.find((el) => norm(elementText(el)).includes("\xD6DEME EKLE")) || candidates[0] || null;
+  }
+  function findSalaryPaymentOpenerButton() {
+    const root = getActiveAppDocument();
+    const wanted = norm("\xD6DEME EKLE");
+    return $$("button, a", root).filter(isVisible).find((button) => {
+      if (button.closest(SALARY_PAYMENT_FORM_SELECTOR)) return false;
+      return norm(elementText(button)) === wanted;
+    });
+  }
+  async function openSalaryPaymentForm() {
+    if (findSalaryPaymentWidget()) return;
+    const opener = findSalaryPaymentOpenerButton();
+    if (!opener) throw new Error("'\xD6deme Ekle' butonu bulunamad\u0131.");
+    nativeClick(opener);
+    await waitFor(() => findSalaryPaymentWidget(), 8e3);
+    await sleep(300);
+  }
+  function findSalaryPaymentFieldByLabel(form, labelTexts) {
+    const wanted = labelTexts.map(norm);
+    return $$("[class*='p-field']", form).find((field) => {
+      const label = field.querySelector("label, [class*='field-label']");
+      const text = norm(elementText(label));
+      return wanted.some((want) => text.includes(want));
+    }) || null;
+  }
+  async function setSalaryPaymentDate(form, date) {
+    const field = findSalaryPaymentFieldByLabel(form, ["TAR\u0130H"]);
+    if (!field) throw new Error("Maa\u015F \xF6deme TAR\u0130H alan\u0131 bulunamad\u0131.");
+    const input = field.querySelector("input[type='text'], input");
+    if (!input) throw new Error("Maa\u015F \xF6deme TAR\u0130H input'u bulunamad\u0131.");
+    setNativeValue(input, formatDateTR(date), { blur: false, keyup: false });
+    await sleep(200);
+  }
+  async function selectSalaryPaymentAccount(form, account) {
+    const field = findSalaryPaymentFieldByLabel(form, ["HESAP"]);
+    if (!field) throw new Error("Maa\u015F \xF6deme HESAP alan\u0131 bulunamad\u0131.");
+    const trigger = field.querySelector(".ember-power-select-trigger, [role='button'][data-ebd-id]") || field.querySelector("[role='button']") || field;
+    const wanted = norm(account);
+    nativeClick(trigger);
+    await sleep(250);
+    const option = await waitFor(() => {
+      const roots = getSearchRoots().flatMap((root) => getVisibleDropdownRoots(root));
+      for (const root of roots) {
+        const options = $$(
+          ".ember-power-select-option, [role='option'], li, a, button",
+          root
+        ).filter(isVisible);
+        const match = options.find((item) => norm(elementText(item)) === wanted) || options.find((item) => norm(elementText(item)).includes(wanted)) || options.find((item) => wanted.includes(norm(elementText(item))));
+        if (match) return match;
+      }
+      nativeClick(trigger);
+      return null;
+    }, 7e3).catch(() => null);
+    if (!option) throw new Error(`Maa\u015F \xF6deme hesab\u0131 bulunamad\u0131: ${account}`);
+    nativeClick(option);
+    await sleep(300);
+  }
+  function setSalaryPaymentAmount(form, amount) {
+    const field = findSalaryPaymentFieldByLabel(form, ["MEBLA\u011E", "MEBLAG"]);
+    if (!field) throw new Error("Maa\u015F \xF6deme MEBLA\u011E alan\u0131 bulunamad\u0131.");
+    const input = field.querySelector("input[datatype='decimal2'], input");
+    if (!input) throw new Error("Maa\u015F \xF6deme MEBLA\u011E input'u bulunamad\u0131.");
+    setNativeValue(input, formatAmountTR(amount), { blur: false, keyup: false });
+  }
+  function setSalaryPaymentDescription(form, description) {
+    if (!description) return;
+    const field = findSalaryPaymentFieldByLabel(form, ["A\xC7IKLAMA", "ACIKLAMA"]);
+    if (!field) {
+      console.warn("[AJANS] Maa\u015F \xF6deme A\xC7IKLAMA alan\u0131 bulunamad\u0131.");
+      return;
+    }
+    const input = field.querySelector("input[type='text'], input");
+    if (input) setNativeValue(input, description, { blur: false, keyup: false });
+  }
+  async function fillSalaryPaymentForm(record) {
+    const form = await waitFor(() => findSalaryPaymentWidget(), 8e3);
+    await withSalaryPaymentSubmitGuard(form, async () => {
+      await setSalaryPaymentDate(form, record.date);
+      await selectSalaryPaymentAccount(form, record.account);
+      setSalaryPaymentAmount(form, record.amount);
+      setSalaryPaymentDescription(form, record.description || record.salaryTitle);
+    });
+  }
+  function isSalaryPaymentFormOpen() {
+    return Boolean(findSalaryPaymentWidget());
+  }
+  function findEmployeeSidebar(root = getActiveAppDocument()) {
+    const explicit = $$("[class*='employee'][class*='show-sidebar']", root).find(
+      isVisible
+    );
+    if (explicit) return explicit;
+    const balance = $("[data-test-employee-show-balance]", root) || $("[data-test-balance-info]", root);
+    return balance?.closest?.("[class*='show-sidebar']") || balance?.parentElement;
+  }
+  function findMoreMenuTrigger() {
+    for (const root of getSearchRoots()) {
+      const sidebar = findEmployeeSidebar(root);
+      const scopes = [sidebar, root].filter(Boolean);
+      for (const scope of scopes) {
+        const dropdownTrigger = $$(
+          ".ember-basic-dropdown-trigger, [role='button'][data-ebd-id]",
+          scope
+        ).filter(isVisible).find((el) => norm(elementText(el)).includes("D\u0130\u011EER"));
+        if (dropdownTrigger) return dropdownTrigger;
+        const button = $$("button", scope).filter(isVisible).find((el) => norm(elementText(el)).includes("D\u0130\u011EER"));
+        if (button) return button.closest(".ember-basic-dropdown-trigger") || button;
+      }
+    }
+    return null;
+  }
+  function findSalaryMenuAction() {
+    const roots = getSearchRoots();
+    for (const root of roots) {
+      const dropdownRoots = getVisibleDropdownRoots(root);
+      const action = findVisibleActionContaining("YEN\u0130 MAA\u015E / PR\u0130M OLU\u015ETUR", {
+        roots: dropdownRoots,
+        selector: "a, button, li"
+      });
+      if (action) {
+        return action.matches("a, button") ? action : action.querySelector("a, button");
+      }
+    }
+    return findVisibleActionContaining("YEN\u0130 MAA\u015E / PR\u0130M OLU\u015ETUR", {
+      roots,
+      selector: "a, button"
+    });
+  }
+  async function openSalaryCreateForm() {
+    if (getSalaryStage() === "salary-form") return;
+    const moreButton = await waitFor(
+      () => findMoreMenuTrigger(),
+      8e3
+    ).catch(() => null);
+    if (!moreButton) throw new Error("'Di\u011Fer' butonu bulunamad\u0131.");
+    for (let attempt = 0; attempt < 3; attempt++) {
+      nativeClick(moreButton);
+      const salaryAction = await waitFor(() => findSalaryMenuAction(), 2500).catch(
+        () => null
+      );
+      if (salaryAction) {
+        clickLink2(salaryAction);
+        await waitFor(() => getSalaryStage() === "salary-form", 12e3);
+        await sleep(500);
+        return;
+      }
+      await sleep(300);
+    }
+    throw new Error("'Yeni Maa\u015F / Prim Olu\u015Ftur' se\xE7ene\u011Fi bulunamad\u0131.");
+  }
+  async function waitForSalaryFormReady() {
+    return waitFor(
+      () => findInputByLabels(RECORD_NAME_LABELS, getActiveAppDocument()),
+      15e3
+    ).catch(() => null);
+  }
+  async function setSalaryDate(labelTexts, date, fieldName) {
+    const input = findInputByLabels(labelTexts, getActiveAppDocument());
+    if (!input) {
+      throw new Error(`${fieldName} alan\u0131 bulunamad\u0131.`);
+    }
+    setNativeValue(input, formatDateTR(date));
+    await sleep(150);
+  }
+  async function fillSalaryExpenseForm(record) {
+    if (!record.employee) throw new Error("\xC7al\u0131\u015Fan ad\u0131 bo\u015F.");
+    if (!record.title) throw new Error("Kay\u0131t ismi bo\u015F.");
+    if (!record.amount) throw new Error("Toplam tutar bo\u015F.");
+    if (!record.entitlementDateText) throw new Error("Hak edi\u015F tarihi bo\u015F.");
+    if (!record.dueDateText) throw new Error("\xD6denece\u011Fi tarih bo\u015F.");
+    const ready = await waitForSalaryFormReady();
+    if (!ready) {
+      throw new Error("Yeni Maa\u015F / Prim formu y\xFCklenmedi; Kay\u0131t \u0130smi alan\u0131 bulunamad\u0131.");
+    }
+    setRequiredField(RECORD_NAME_LABELS, record.title, "Kay\u0131t ismi");
+    await setSalaryDate(
+      ENTITLEMENT_DATE_LABELS,
+      record.entitlementDate,
+      "Hak edi\u015F tarihi"
+    );
+    setRequiredField(
+      AMOUNT_LABELS,
+      formatAmountTR(record.amount),
+      "Toplam tutar"
+    );
+    await setSalaryDate(DUE_DATE_LABELS2, record.dueDate, "\xD6denece\u011Fi tarih");
+    await selectCategory(record.category || "maa\u015F");
+  }
+  async function runSalaryExpense(record, onProgress = () => {
+  }) {
+    if (!record) throw new Error("Maa\u015F kayd\u0131 yok.");
+    onProgress("\xC7al\u0131\u015Fanlar listesine gidiliyor...");
+    await goToEmployeesList();
+    onProgress(`\xC7al\u0131\u015Fan a\xE7\u0131l\u0131yor: ${record.employee}`);
+    await searchAndOpenEmployee(record.employee);
+    onProgress("Yeni maa\u015F / prim formu a\xE7\u0131l\u0131yor...");
+    await openSalaryCreateForm();
+    onProgress("Maa\u015F gideri alanlar\u0131 dolduruluyor...");
+    await fillSalaryExpenseForm(record);
+  }
+  async function runSalaryPayment(record, onProgress = () => {
+  }) {
+    if (!record) throw new Error("Maa\u015F \xF6deme kayd\u0131 yok.");
+    if (!record.amount) throw new Error("Maa\u015F \xF6deme tutar\u0131 bo\u015F.");
+    if (!record.date) throw new Error("Maa\u015F \xF6deme tarihi bo\u015F.");
+    if (!record.account) throw new Error("Maa\u015F \xF6deme hesab\u0131 bo\u015F.");
+    onProgress("Maa\u015F \xF6deme formu a\xE7\u0131l\u0131yor...");
+    await openSalaryPaymentForm();
+    onProgress("Maa\u015F \xF6deme alanlar\u0131 dolduruluyor...");
+    await fillSalaryPaymentForm(record);
+  }
+
   // src/parasut/frame.js
   function isIframe() {
     try {
@@ -1706,17 +2362,19 @@
         button.style.borderColor = BORDER;
       });
     });
-    const fillButton = panel.querySelector("#ajans-gider-fill");
-    if (fillButton) {
-      fillButton.addEventListener("mouseenter", () => {
-        if (fillButton.disabled) return;
-        fillButton.style.background = ACCENT_DARK;
+    const primaryButtons = panel.querySelectorAll(
+      "#ajans-gider-fill, #ajans-gider-pay, #ajans-gider-salary"
+    );
+    primaryButtons.forEach((button) => {
+      button.addEventListener("mouseenter", () => {
+        if (button.disabled) return;
+        button.style.background = ACCENT_DARK;
       });
-      fillButton.addEventListener("mouseleave", () => {
-        if (fillButton.disabled) return;
-        fillButton.style.background = ACCENT;
+      button.addEventListener("mouseleave", () => {
+        if (button.disabled) return;
+        button.style.background = ACCENT;
       });
-    }
+    });
     const editButton = panel.querySelector("#ajans-gider-edit-data");
     if (editButton) {
       editButton.addEventListener("mouseenter", () => {
@@ -2081,6 +2739,21 @@
             letter-spacing:-0.01em;
           ">\xD6demeyi Ba\u015Flat</button>
         </div>
+
+        <div id="ajans-gider-salary-actions" style="display:none;">
+          <button id="ajans-gider-salary" style="
+            padding:9px 14px;
+            background:${ACCENT2};
+            color:#ffffff;
+            border:0;
+            border-radius:9px;
+            font-weight:600;
+            font-size:13px;
+            cursor:pointer;
+            box-shadow: 0 1px 0 rgba(15,23,42,.05);
+            letter-spacing:-0.01em;
+          ">Maa\u015F Gideri Olu\u015Ftur</button>
+        </div>
       </div>
     </div>
   `;
@@ -2140,6 +2813,14 @@
     button.style.cursor = loading ? "not-allowed" : "pointer";
     button.style.background = loading ? ACCENT_DARK2 : ACCENT3;
   }
+  function setSalaryButtonLoading(button, loading) {
+    if (!button) return;
+    button.disabled = loading;
+    button.textContent = loading ? "Dolduruluyor..." : "Maa\u015F Gideri Olu\u015Ftur";
+    button.style.opacity = loading ? "0.65" : "1";
+    button.style.cursor = loading ? "not-allowed" : "pointer";
+    button.style.background = loading ? ACCENT_DARK2 : ACCENT3;
+  }
   function applyMinimizedState(panel, body, button) {
     const minimized = isPanelMinimized();
     body.style.display = minimized ? "none" : "block";
@@ -2149,14 +2830,8 @@
     panel.style.width = minimized ? "240px" : "360px";
   }
 
-  // src/panel/controller.js
-  var isFilling = false;
-  var isRunningPayment = false;
-  var lastDecisionLogKey = "";
+  // src/panel/panelDebug.js
   var lastParseDebugKey = "";
-  var isDataEditorOpen = true;
-  var isHelpOpen = false;
-  var paymentAwaitingManualSave = false;
   function appendDebugLog(event, details = {}) {
     const entry = {
       ts: (/* @__PURE__ */ new Date()).toISOString(),
@@ -2254,51 +2929,29 @@
     }
     return snapshot;
   }
-  function getRowsFromTextarea() {
-    const textarea = $("#ajans-gider-textarea");
-    if (!textarea) return [];
-    return parseTable(textarea.value);
-  }
-  function getCurrentFlow() {
-    return getPageDetectionSnapshot().flow;
-  }
-  function isBusy() {
-    return isFilling || isRunningPayment;
-  }
-  function isPaymentFormOpen() {
-    return Boolean($("[data-tns='add-payment']", getActiveAppDocument()));
-  }
-  function clearPaymentWaitIfFormClosed() {
-    if (paymentAwaitingManualSave && !isPaymentFormOpen()) {
-      paymentAwaitingManualSave = false;
-    }
-  }
-  function getActiveRecords(flow = getCurrentFlow()) {
-    const rows = getRowsFromTextarea();
-    if (flow === "payment") {
-      return { kind: "payment", items: getPaymentRecords(rows) };
-    }
-    return { kind: "expense", items: rows };
-  }
-  function advanceSelectionAfterSuccessfulFill(currentIndex, rowsLength) {
-    if (currentIndex >= rowsLength - 1) return false;
-    setSelectedIndex(currentIndex + 1);
-    syncPanelRows();
-    return true;
-  }
+
+  // src/panel/panelFlow.js
   var FLOW_TITLES = {
     expense: "Gider Doldurucu",
     payment: "\xD6deme Doldurucu",
+    salary: "Maa\u015F Doldurucu",
     idle: "Gider / \xD6deme Doldurucu"
   };
   var FLOW_HELP = {
     expense: "Excel sat\u0131rlar\u0131n\u0131 kopyalay\u0131p a\u015Fa\u011F\u0131ya yap\u0131\u015Ft\u0131r. Sayfa de\u011Fi\u015Fse de veri kal\u0131r.<br><b>S\xFCtunlar:</b> Ki\u015Fi \xB7 Marka \xB7 Tutar \xB7 Kay\u0131t \u0130smi<br>Se\xE7ili kayd\u0131 <b>Ana Gideri Doldur</b> ile forma yazar; kaydetmeyi sen yapars\u0131n.",
     payment: "Excel sat\u0131rlar\u0131n\u0131 kopyalay\u0131p a\u015Fa\u011F\u0131ya yap\u0131\u015Ft\u0131r. Sayfa de\u011Fi\u015Fse de veri kal\u0131r.<br><b>\xD6deme s\xFCtunlar\u0131:</b> \xD6deme Tutar\u0131 \xB7 \xD6deme Tarihi \xB7 \xD6deme Hesab\u0131<br>Birden fazla \xF6deme i\xE7in tutar/tarih/hesab\u0131 <b>/</b> ile ay\u0131r. <b>\xD6demeyi Ba\u015Flat</b> tedarik\xE7iyi bulup \xF6deme formunu doldurur; son <b>\xD6DEME EKLE</b>'ye sen basars\u0131n.",
-    idle: "Excel sat\u0131rlar\u0131n\u0131 kopyalay\u0131p a\u015Fa\u011F\u0131ya yap\u0131\u015Ft\u0131r. Sayfa de\u011Fi\u015Fse de veri kal\u0131r.<br>Gider formuna gidince gider, tedarik\xE7i sayfas\u0131na gidince \xF6deme arac\u0131 \xE7\u0131kar."
+    salary: "Excel sat\u0131rlar\u0131n\u0131 kopyalay\u0131p a\u015Fa\u011F\u0131ya yap\u0131\u015Ft\u0131r. Sayfa de\u011Fi\u015Fse de veri kal\u0131r.<br><b>S\xFCtunlar:</b> \xC7al\u0131\u015Fan \xB7 Kay\u0131t \u0130smi \xB7 Hak Edi\u015F Tarihi \xB7 Toplam Tutar \xB7 \xD6denece\u011Fi Tarih<br>Maa\u015F detay sayfas\u0131nda \xF6deme i\xE7in <b>Ana Maa\u015F / BES / Kalan Maa\u015F</b> bloklar\u0131nda tarih, hesap, tutar ve a\xE7\u0131klama s\xFCtunlar\u0131 kullan\u0131l\u0131r. Bo\u015F tutarl\u0131 blok atlan\u0131r; son <b>\xD6DEME EKLE</b>'ye sen basars\u0131n.",
+    idle: "Excel sat\u0131rlar\u0131n\u0131 kopyalay\u0131p a\u015Fa\u011F\u0131ya yap\u0131\u015Ft\u0131r. Sayfa de\u011Fi\u015Fse de veri kal\u0131r.<br>Gider formu, tedarik\xE7i sayfas\u0131 veya \xE7al\u0131\u015Fanlar sayfas\u0131na gidince ilgili ara\xE7 \xE7\u0131kar."
   };
-  function updateFlowVisibility(flow = getCurrentFlow()) {
+  function getRecordKind(flow) {
+    if (flow === "payment") return "payment";
+    if (flow === "salary") return "salary";
+    return "expense";
+  }
+  function updateFlowVisibility(flow) {
     const expenseActions = $("#ajans-gider-expense-actions");
     const paymentActions = $("#ajans-gider-payment-actions");
+    const salaryActions = $("#ajans-gider-salary-actions");
     const titleText = $("#ajans-gider-title-text");
     const helpContent = $("#ajans-gider-help-content");
     if (expenseActions) {
@@ -2307,6 +2960,9 @@
     if (paymentActions) {
       paymentActions.style.display = flow === "payment" ? "block" : "none";
     }
+    if (salaryActions) {
+      salaryActions.style.display = flow === "salary" ? "block" : "none";
+    }
     if (titleText) {
       titleText.textContent = FLOW_TITLES[flow] || FLOW_TITLES.idle;
     }
@@ -2314,7 +2970,9 @@
       helpContent.innerHTML = FLOW_HELP[flow] || FLOW_HELP.idle;
     }
   }
-  function applyDataEditorState() {
+
+  // src/panel/panelRecordCard.js
+  function applyDataEditorState(isDataEditorOpen2) {
     const wrapper = $("#ajans-gider-textarea-wrapper");
     const collapsed = $("#ajans-gider-data-collapsed");
     const textarea = $("#ajans-gider-textarea");
@@ -2325,7 +2983,7 @@
       collapsed.hidden = true;
       return;
     }
-    if (isDataEditorOpen) {
+    if (isDataEditorOpen2) {
       wrapper.hidden = false;
       collapsed.hidden = true;
     } else {
@@ -2333,10 +2991,10 @@
       collapsed.hidden = false;
     }
   }
-  function applyHelpState() {
+  function applyHelpState(isHelpOpen2) {
     const help = $("#ajans-gider-help");
     if (!help) return;
-    help.hidden = !isHelpOpen;
+    help.hidden = !isHelpOpen2;
   }
   function setDataSummary(rowCount) {
     const summary = $("#ajans-gider-data-summary");
@@ -2411,17 +3069,24 @@
     empty.hidden = true;
     record.hidden = false;
     if (supplier) {
-      supplier.textContent = String(item.supplier || "Tedarik\xE7i yok").trim();
+      const personName = kind === "salary" ? item.employee || "\xC7al\u0131\u015Fan yok" : item.supplier || "Tedarik\xE7i yok";
+      supplier.textContent = String(personName).trim();
     }
     if (amount) {
       amount.textContent = `\u20BA ${formatAmountTR(item.amount)}`;
     }
-    if (kind === "payment") {
+    if (kind === "payment" || kind === "salary-payment") {
       const chips2 = [];
       if (item.paymentCount > 1) {
         chips2.push({
           label: `\xD6deme ${item.paymentIndex + 1}/${item.paymentCount}`,
           tone: "accent"
+        });
+      }
+      if (kind === "salary-payment" && item.paymentKind) {
+        chips2.push({
+          label: String(item.paymentKind),
+          tone: chips2.length ? "muted" : "accent"
         });
       }
       renderMetaChips(meta, chips2);
@@ -2433,7 +3098,30 @@
         dates.style.display = parts.length ? "block" : "none";
       }
       if (title) {
-        const text = String(item.itemName || "").trim();
+        const text = String(
+          kind === "salary-payment" ? item.description || item.salaryTitle || "" : item.itemName || ""
+        ).trim();
+        title.textContent = text;
+        title.title = text;
+        title.style.display = text ? "-webkit-box" : "none";
+      }
+      setStepButtonsState(selectedIndex, total);
+      return;
+    }
+    if (kind === "salary") {
+      const chips2 = [{ label: "maa\u015F", tone: "accent" }];
+      renderMetaChips(meta, chips2);
+      if (dates) {
+        const parts = [];
+        if (item.entitlementDate) {
+          parts.push(`Hak edi\u015F: ${formatDateTR(item.entitlementDate)}`);
+        }
+        if (item.dueDate) parts.push(`\xD6denecek: ${formatDateTR(item.dueDate)}`);
+        dates.textContent = parts.join("  \xB7  ");
+        dates.style.display = parts.length ? "block" : "none";
+      }
+      if (title) {
+        const text = String(item.title || "").trim();
         title.textContent = text;
         title.title = text;
         title.style.display = text ? "-webkit-box" : "none";
@@ -2464,6 +3152,57 @@
     }
     setStepButtonsState(selectedIndex, total);
   }
+
+  // src/panel/controller.js
+  var isFilling = false;
+  var isRunningPayment = false;
+  var isRunningSalary = false;
+  var lastDecisionLogKey = "";
+  var isDataEditorOpen = true;
+  var isHelpOpen = false;
+  var paymentAwaitingManualSave = false;
+  var salaryPaymentAwaitingManualSave = false;
+  function getRowsFromTextarea() {
+    const textarea = $("#ajans-gider-textarea");
+    if (!textarea) return [];
+    return parseTable(textarea.value);
+  }
+  function getCurrentFlow() {
+    return getPageDetectionSnapshot().flow;
+  }
+  function isBusy() {
+    return isFilling || isRunningPayment || isRunningSalary;
+  }
+  function isPaymentFormOpen() {
+    return Boolean($("[data-tns='add-payment']", getActiveAppDocument()));
+  }
+  function clearPaymentWaitIfFormClosed() {
+    if (paymentAwaitingManualSave && !isPaymentFormOpen()) {
+      paymentAwaitingManualSave = false;
+    }
+    if (salaryPaymentAwaitingManualSave && !isSalaryPaymentFormOpen()) {
+      salaryPaymentAwaitingManualSave = false;
+    }
+  }
+  function getActiveRecords(flow = getCurrentFlow()) {
+    const rows = getRowsFromTextarea();
+    if (flow === "payment") {
+      return { kind: "payment", items: getPaymentRecords(rows) };
+    }
+    if (flow === "salary") {
+      if (getPageDetectionSnapshot().salaryStage === "salary-detail") {
+        return { kind: "salary-payment", items: getSalaryPaymentRecords(rows) };
+      }
+      return { kind: "salary", items: getSalaryRecords(rows) };
+    }
+    return { kind: "expense", items: rows };
+  }
+  function advanceSelectionAfterSuccessfulFill(currentIndex, rowsLength) {
+    if (currentIndex >= rowsLength - 1) return false;
+    setSelectedIndex(currentIndex + 1);
+    syncPanelRows();
+    return true;
+  }
   function syncPanelRows() {
     clearPaymentWaitIfFormClosed();
     const textarea = $("#ajans-gider-textarea");
@@ -2471,8 +3210,11 @@
     if (!textarea) return;
     const flow = getCurrentFlow();
     updateFlowVisibility(flow);
-    applyHelpState();
-    let records = { kind: flow === "payment" ? "payment" : "expense", items: [] };
+    applyHelpState(isHelpOpen);
+    let records = {
+      kind: getRecordKind(flow),
+      items: []
+    };
     let parseError = null;
     try {
       records = getActiveRecords(flow);
@@ -2489,16 +3231,18 @@
       items.forEach((item, index) => {
         const option = document.createElement("option");
         option.value = String(index);
-        const supplier = String(item.supplier || "Tedarik\xE7i yok").trim();
+        const supplier = String(
+          kind === "salary" || kind === "salary-payment" ? item.employee || "\xC7al\u0131\u015Fan yok" : item.supplier || "Tedarik\xE7i yok"
+        ).trim();
         const shortSupplier = supplier.length > 24 ? `${supplier.slice(0, 24)}\u2026` : supplier;
         const amountText = `${formatAmountTR(item.amount)} TL`;
-        const suffix = kind === "payment" && item.paymentCount > 1 ? `  \xB7  \xD6d. ${item.paymentIndex + 1}/${item.paymentCount}` : "";
+        const suffix = (kind === "payment" || kind === "salary-payment") && item.paymentCount > 1 ? `  \xB7  \xD6d. ${item.paymentIndex + 1}/${item.paymentCount}` : "";
         option.textContent = `${index + 1} / ${items.length}  \xB7  ${shortSupplier}  \xB7  ${amountText}${suffix}`;
         select.appendChild(option);
       });
     }
     setDataSummary(items.length);
-    applyDataEditorState();
+    applyDataEditorState(isDataEditorOpen);
     if (parseError) {
       renderRecordCard(null, kind, 0, 0);
       if (!isBusy()) setStatus(String(parseError.message || parseError), true);
@@ -2514,6 +3258,16 @@
         setStatus(
           hasText ? "\xD6deme kayd\u0131 yok. Excel'e \xD6deme Tutar\u0131 / Tarihi / Hesab\u0131 s\xFCtunlar\u0131n\u0131 ekle." : "Tedarik\xE7iler sayfas\u0131ndas\u0131n. Excel'i yap\u0131\u015Ft\u0131r\u0131nca \xF6demeleri ba\u015Flatabilirsin."
         );
+      } else if (flow === "salary") {
+        const hasText = String(textarea.value || "").trim().length > 0;
+        const isSalaryDetail = getPageDetectionSnapshot().salaryStage === "salary-detail";
+        let message = "\xC7al\u0131\u015Fanlar sayfas\u0131ndas\u0131n. Excel'i yap\u0131\u015Ft\u0131r\u0131nca maa\u015F giderini olu\u015Fturabilirsin.";
+        if (isSalaryDetail) {
+          message = hasText ? "Maa\u015F \xF6deme kayd\u0131 yok. Excel'de Ana Maa\u015F / BES / Kalan Maa\u015F \xF6deme s\xFCtunlar\u0131n\u0131 kontrol et." : "Maa\u015F detay sayfas\u0131ndas\u0131n. Excel'i yap\u0131\u015Ft\u0131r\u0131nca maa\u015F \xF6demelerini doldurabilirsin.";
+        } else if (hasText) {
+          message = "Maa\u015F kayd\u0131 yok. Excel'de \xC7al\u0131\u015Fan / Kay\u0131t \u0130smi / Hak Edi\u015F Tarihi / Toplam Tutar / \xD6denece\u011Fi Tarih s\xFCtunlar\u0131n\u0131 kontrol et.";
+        }
+        setStatus(message);
       } else {
         setStatus("");
       }
@@ -2534,8 +3288,23 @@
         return;
       }
       setStatus("");
+    } else if (flow === "salary") {
+      const salaryButton = $("#ajans-gider-salary");
+      if (salaryButton && !isRunningSalary) {
+        salaryButton.textContent = kind === "salary-payment" ? "Maa\u015F \xD6demesi Doldur" : "Maa\u015F Gideri Olu\u015Ftur";
+      }
+      if (kind === "salary-payment" && salaryPaymentAwaitingManualSave && isSalaryPaymentFormOpen()) {
+        setStatus(
+          'Maa\u015F \xF6deme formu a\xE7\u0131k. Kontrol edip Para\u015F\xFCt i\xE7indeki son "\xD6DEME EKLE" butonuna manuel bas; form kapand\u0131ktan sonra \u203A ile devam et.',
+          "success"
+        );
+        return;
+      }
+      setStatus("");
     } else {
-      setStatus("Gider formu veya tedarik\xE7i sayfas\u0131na gidince bu kayd\u0131 kullanabilirsin.");
+      setStatus(
+        "Gider formu, tedarik\xE7i sayfas\u0131 veya \xE7al\u0131\u015Fanlar sayfas\u0131na gidince bu kayd\u0131 kullanabilirsin."
+      );
     }
   }
   function registerPanelEvents(panel) {
@@ -2582,7 +3351,7 @@
       textarea.style.borderColor = "#e5e7eb";
       if (String(textarea.value || "").trim().length > 0) {
         isDataEditorOpen = false;
-        applyDataEditorState();
+        applyDataEditorState(isDataEditorOpen);
       }
     });
     if (select) {
@@ -2594,13 +3363,13 @@
     if (helpButton) {
       helpButton.addEventListener("click", () => {
         isHelpOpen = !isHelpOpen;
-        applyHelpState();
+        applyHelpState(isHelpOpen);
       });
     }
     if (editDataButton) {
       editDataButton.addEventListener("click", () => {
         isDataEditorOpen = true;
-        applyDataEditorState();
+        applyDataEditorState(isDataEditorOpen);
         const ta = $("#ajans-gider-textarea");
         if (ta) ta.focus();
       });
@@ -2686,6 +3455,57 @@
       } finally {
         isRunningPayment = false;
         setPayButtonLoading(button, false);
+      }
+    });
+    $("#ajans-gider-salary").addEventListener("click", async (event) => {
+      const button = event.currentTarget;
+      let isSalaryPayment = false;
+      if (isRunningSalary) return;
+      isRunningSalary = true;
+      setSalaryButtonLoading(button, true);
+      try {
+        clearPaymentWaitIfFormClosed();
+        const active = getActiveRecords("salary");
+        const records = active.items;
+        isSalaryPayment = active.kind === "salary-payment";
+        if (isSalaryPayment && salaryPaymentAwaitingManualSave && isSalaryPaymentFormOpen()) {
+          throw new Error(
+            'A\xE7\u0131k maa\u015F \xF6deme formu var. \xD6nce kontrol edip Para\u015F\xFCt i\xE7indeki son "\xD6DEME EKLE" butonuna manuel bas, form kapand\u0131ktan sonra sonraki \xF6demeye ge\xE7.'
+          );
+        }
+        if (!records.length) {
+          throw new Error(
+            isSalaryPayment ? "Maa\u015F \xF6deme kayd\u0131 bulunamad\u0131. Excel'de Ana Maa\u015F / BES / Kalan Maa\u015F \xF6deme s\xFCtunlar\u0131 var m\u0131?" : "Maa\u015F kayd\u0131 bulunamad\u0131. Excel'de \xC7al\u0131\u015Fan / Kay\u0131t \u0130smi / Hak Edi\u015F Tarihi / Toplam Tutar / \xD6denece\u011Fi Tarih s\xFCtunlar\u0131 var m\u0131?"
+          );
+        }
+        const index = getSelectedIndex(records.length);
+        const record = records[index];
+        setStatus(
+          isSalaryPayment ? `${index + 1}. maa\u015F \xF6demesi dolduruluyor...` : `${index + 1}. maa\u015F kayd\u0131 dolduruluyor...`
+        );
+        if (isSalaryPayment) {
+          await runSalaryPayment(record, (message) => setStatus(message));
+          salaryPaymentAwaitingManualSave = true;
+          setStatus(
+            `Maa\u015F \xF6deme formu dolduruldu (${index + 1}/${records.length}). Kontrol edip "\xD6DEME EKLE"ye bas, sonra \u203A ile sonraki \xF6demeye ge\xE7.`,
+            "success"
+          );
+        } else {
+          await runSalaryExpense(record, (message) => setStatus(message));
+          const advanced = advanceSelectionAfterSuccessfulFill(index, records.length);
+          const nextMessage = advanced ? ` ${index + 2}. kayda ge\xE7ildi.` : " Son kay\u0131ttas\u0131n.";
+          setStatus(
+            `Maa\u015F gideri forma dolduruldu (${index + 1}/${records.length}).${nextMessage} Kaydetme i\u015Flemini manuel yap.`,
+            "success"
+          );
+        }
+      } catch (err) {
+        console.error("[AJANS] Maa\u015F gideri hatas\u0131:", err);
+        setStatus(err.message || String(err), true);
+      } finally {
+        isRunningSalary = false;
+        setSalaryButtonLoading(button, false);
+        button.textContent = isSalaryPayment ? "Maa\u015F \xD6demesi Doldur" : "Maa\u015F Gideri Olu\u015Ftur";
       }
     });
     minimizeButton.addEventListener("click", () => {

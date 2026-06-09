@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import { formatDateTR, parseAmount } from "../src/core/format.js";
 import {
   getPaymentRecords,
+  getSalaryPaymentRecords,
+  getSalaryRecords,
   inspectTableParse,
   parseTable,
 } from "../src/core/tableParser.js";
@@ -196,4 +198,136 @@ test("getPaymentRecords reads compact Turkish payment dates", () => {
 
   assert.equal(record.dateText, "0605-2026");
   assert.equal(formatDateTR(record.date), "06.05.2026");
+});
+
+test("getSalaryRecords reads header-based salary expense rows", () => {
+  const sample = [
+    "Çalışan\tKayıt İsmi\tHak Ediş Tarihi\tToplam Tutar\tÖdeneceği Tarih",
+    "Emre Demirhan\t2026 Haziran maaşı\t30.06.2026\t120.000,00\t05.07.2026",
+  ].join("\n");
+
+  const [record] = getSalaryRecords(sample);
+
+  assert.equal(record.employee, "Emre Demirhan");
+  assert.equal(record.title, "2026 Haziran maaşı");
+  assert.equal(record.amount, "120.000,00");
+  assert.equal(record.category, "maaş");
+  assert.equal(record.entitlementDateText, "30.06.2026");
+  assert.equal(formatDateTR(record.entitlementDate), "30.06.2026");
+  assert.equal(record.dueDateText, "05.07.2026");
+  assert.equal(formatDateTR(record.dueDate), "05.07.2026");
+});
+
+test("getSalaryRecords ignores regular expense rows without salary dates", () => {
+  const records = getSalaryRecords(
+    "YASİN ZENGİN\tHALEON\t2.250,00\tHALEON VOLTAREN PPT SUNUM 9 SYF",
+  );
+
+  assert.equal(records.length, 0);
+});
+
+test("getSalaryPaymentRecords reads separate salary payment column groups", () => {
+  const sample = [
+    [
+      "Çalışan",
+      "Kayıt İsmi",
+      "Hak Ediş Tarihi",
+      "Toplam Tutar",
+      "Ödeneceği Tarih",
+      "Ana Maaş Ödeme Tarihi",
+      "Ana Maaş Ödeme Hesabı",
+      "Ana Maaş Ödeme Tutarı",
+      "Ana Maaş Ödeme Açıklaması",
+      "BES Ödeme Tarihi",
+      "BES Ödeme Hesabı",
+      "BES Ödeme Tutarı",
+      "BES Ödeme Açıklaması",
+      "Kalan Maaş Ödeme Tarihi",
+      "Kalan Maaş Ödeme Hesabı",
+      "Kalan Maaş Ödeme Tutarı",
+      "Kalan Maaş Ödeme Açıklaması",
+    ].join("\t"),
+    [
+      "Emre Demirhan",
+      "2026 Mayıs maaşı",
+      "31.05.2026",
+      "90.000,00",
+      "05.06.2026",
+      "05.06.2026",
+      "EV TL",
+      "50.000,00",
+      "2026 Mayıs maaş",
+      "10.06.2026",
+      "BES TL",
+      "10.000,00",
+      "2026 Mayıs BES",
+      "20.06.2026",
+      "GARANTİ TL",
+      "30.000,00",
+      "2026 Mayıs kalan maaş",
+    ].join("\t"),
+  ].join("\n");
+
+  const records = getSalaryPaymentRecords(sample);
+
+  assert.equal(records.length, 3);
+  assert.equal(records[0].employee, "Emre Demirhan");
+  assert.equal(records[0].paymentKind, "Ana Maaş");
+  assert.equal(formatDateTR(records[0].date), "05.06.2026");
+  assert.equal(records[0].account, "EV TL");
+  assert.equal(records[0].amount, "50.000,00");
+  assert.equal(records[0].description, "2026 Mayıs maaş");
+  assert.equal(records[1].paymentKind, "BES");
+  assert.equal(records[1].account, "BES TL");
+  assert.equal(records[2].paymentKind, "Kalan Maaş");
+  assert.equal(records[2].amount, "30.000,00");
+});
+
+test("getSalaryPaymentRecords skips empty salary payment groups", () => {
+  const sample = [
+    [
+      "Çalışan",
+      "Kayıt İsmi",
+      "Hak Ediş Tarihi",
+      "Toplam Tutar",
+      "Ödeneceği Tarih",
+      "Ana Maaş Ödeme Tarihi",
+      "Ana Maaş Ödeme Hesabı",
+      "Ana Maaş Ödeme Tutarı",
+      "Ana Maaş Ödeme Açıklaması",
+      "BES Ödeme Tarihi",
+      "BES Ödeme Hesabı",
+      "BES Ödeme Tutarı",
+      "BES Ödeme Açıklaması",
+      "Kalan Maaş Ödeme Tarihi",
+      "Kalan Maaş Ödeme Hesabı",
+      "Kalan Maaş Ödeme Tutarı",
+      "Kalan Maaş Ödeme Açıklaması",
+    ].join("\t"),
+    [
+      "Emre Demirhan",
+      "2026 Mayıs maaşı",
+      "31.05.2026",
+      "90.000,00",
+      "05.06.2026",
+      "05.06.2026",
+      "EV TL",
+      "90.000,00",
+      "2026 Mayıs maaş",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+    ].join("\t"),
+  ].join("\n");
+
+  const records = getSalaryPaymentRecords(sample);
+
+  assert.equal(records.length, 1);
+  assert.equal(records[0].paymentKind, "Ana Maaş");
+  assert.equal(records[0].amount, "90.000,00");
 });

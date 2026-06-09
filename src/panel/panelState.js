@@ -68,6 +68,16 @@ export function setPayButtonLoading(button, loading) {
   button.style.background = loading ? ACCENT_DARK : ACCENT;
 }
 
+export function setSalaryButtonLoading(button, loading) {
+  if (!button) return;
+
+  button.disabled = loading;
+  button.textContent = loading ? "Dolduruluyor..." : "Maaş Gideri Oluştur";
+  button.style.opacity = loading ? "0.65" : "1";
+  button.style.cursor = loading ? "not-allowed" : "pointer";
+  button.style.background = loading ? ACCENT_DARK : ACCENT;
+}
+
 export function applyMinimizedState(panel, body, button) {
   const minimized = isPanelMinimized();
 

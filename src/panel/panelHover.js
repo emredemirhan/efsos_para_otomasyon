@@ -34,17 +34,20 @@ export function setupHoverEffects(panel) {
     });
   });
 
-  const fillButton = panel.querySelector("#ajans-gider-fill");
-  if (fillButton) {
-    fillButton.addEventListener("mouseenter", () => {
-      if (fillButton.disabled) return;
-      fillButton.style.background = ACCENT_DARK;
+  const primaryButtons = panel.querySelectorAll(
+    "#ajans-gider-fill, #ajans-gider-pay, #ajans-gider-salary",
+  );
+
+  primaryButtons.forEach((button) => {
+    button.addEventListener("mouseenter", () => {
+      if (button.disabled) return;
+      button.style.background = ACCENT_DARK;
     });
-    fillButton.addEventListener("mouseleave", () => {
-      if (fillButton.disabled) return;
-      fillButton.style.background = ACCENT;
+    button.addEventListener("mouseleave", () => {
+      if (button.disabled) return;
+      button.style.background = ACCENT;
     });
-  }
+  });
 
   const editButton = panel.querySelector("#ajans-gider-edit-data");
   if (editButton) {

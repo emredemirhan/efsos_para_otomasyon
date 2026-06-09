@@ -3,5 +3,6 @@ export {
   applyMinimizedState,
   setFillButtonLoading,
   setPayButtonLoading,
+  setSalaryButtonLoading,
   setStatus,
 } from "./panelState.js";

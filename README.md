@@ -81,10 +81,14 @@ src/
     supplier.js        # tedarikçi autocomplete akışı
     expenseFlow.js     # ana gider formu doldurma akışı
     paymentFlow.js     # tedarikçi ödemesi otomasyonu (ara/aç/eşleştir/doldur)
+    salaryFlow.js      # çalışan maaş gideri otomasyonu (ara/aç/form doldur)
     datepicker.js      # pikaday (yeni ve eski Paraşüt UI) tarih seçimi
   panel/
     view.js            # geriye uyumlu re-export shim
-    controller.js      # panel eventleri, preview, flow görünürlüğü, ödeme kilidi
+    controller.js      # panel eventleri ve akış orkestrasyonu
+    panelDebug.js      # parse/paste debug helper'ları ve konsol araçları
+    panelFlow.js       # flow başlıkları, yardım metinleri ve aksiyon görünürlüğü
+    panelRecordCard.js # seçili kayıt kartı, veri/help görünüm state'leri
     panelTemplate.js   # panel HTML'i
     panelState.js      # status ve loading state'leri
     panelHover.js      # hover stilleri
@@ -106,9 +110,10 @@ Panel iki akışta çalışır; veri her iki akış için aynı `localStorage` m
 
 - **Gider akışı** (`flow: "expense"`): Yeni gider formu sayfasında (`/fis-faturalar/yeni`) sadece `Ana Gideri Doldur` görünür.
 - **Ödeme akışı** (`flow: "payment"`): Tedarikçiler listesi (`/tedarikciler`), tedarikçi detayı (`/tedarikciler/{id}`) ve gider/fiş detayı (`/fis-faturalar/{id}`) sayfalarında `Ödemeyi Başlat` görünür.
+- **Maaş akışı** (`flow: "salary"`): Çalışanlar listesi (`/calisanlar`), çalışan detayı ve yeni maaş/prim formunda `Maaş Gideri Oluştur`; maaş detay sayfasında (`/maaslar/{id}`) `Maaş Ödemesi Doldur` görünür.
 - Diğer sayfalarda popup gizlenir; veri korunur.
 
-Akış ve sayfa tespiti `src/parasut/pageDetection.js` (`flow`, `paymentStage`) ile, görünürlük `src/panel/controller.js` içindeki `getCurrentFlow()` ve `updateFlowVisibility()` ile yönetilir.
+Akış ve sayfa tespiti `src/parasut/pageDetection.js` (`flow`, `paymentStage`, `salaryStage`) ile yapılır; panel orkestrasyonu `src/panel/controller.js`, aksiyon görünürlüğü ise `src/panel/panelFlow.js` tarafından yönetilir.
 
 `Ödemeyi Başlat` tek satır için: tedarikçiyi arar/açar, gider kalemini ada göre eşleştirip açar, sidebar'daki ilk `Ödeme Ekle` butonuna basarak ödeme formunu açar ve tarih/hesap/meblağ/açıklama alanlarını doldurur.
 
@@ -118,6 +123,14 @@ Akış ve sayfa tespiti `src/parasut/pageDetection.js` (`flow`, `paymentStage`) 
 - Kullanıcı formu kontrol eder ve gerçek ödemeyi ekleyen son `ÖDEME EKLE` butonuna manuel basar.
 - Form kapanmadan yeni ödeme başlatılmaz; açık form varken panel kullanıcıdan önce manuel kaydetmesini ister.
 - Sonraki ödemeye geçmek için kayıttan sonra panelde `›` kullanılır.
+
+Maaş akışı da son kaydı kullanıcıya bırakır:
+
+- `Maaş Gideri Oluştur` çalışanı arar/açar, `Diğer > Yeni Maaş / Prim Oluştur` ile maaş formuna gider ve kayıt ismi, hak ediş tarihi, toplam tutar, ödeneceği tarih ve gider kategorisini doldurur.
+- Gider kategorisi Excel'den alınmaz; her zaman `maaş` olarak seçilir.
+- Otomasyon Paraşüt içindeki `Kaydet` butonuna basmaz.
+- Maaş kaydı Paraşüt'te manuel kaydedildikten sonra açılan maaş detay sayfasında `Maaş Ödemesi Doldur` seçili ödeme bloğunu sidebar'a yazar.
+- Maaş ödeme akışında da son `ÖDEME EKLE` butonuna kullanıcı manuel basar; form kapanmadan sonraki ödeme başlatılmaz.
 
 ## Veri Formatı
 
@@ -134,6 +147,39 @@ Header varsa tanınan örnek kolonlar:
 - `Ödeneceği Tarih` / `Ödeme Tarihi`
 - `Etiket` / `Tag`
 - `Ödeme Tutarı` / `Ödeme Tarihi` / `Ödeme Hesabı` (ödeme akışı için ek sütunlar)
+
+### Maaş Sütunları
+
+Maaş akışı header'lı Excel satırlarıyla çalışır. Beklenen temel sütunlar:
+
+- `Çalışan`
+- `Kayıt İsmi`
+- `Hak Ediş Tarihi`
+- `Toplam Tutar`
+- `Ödeneceği Tarih`
+
+Gider kategorisi için kolon gerekmez; otomasyon kategori alanında `maaş` arayıp seçer.
+
+### Maaş Ödeme Sütunları
+
+Maaş detay sayfasında ödeme doldurmak için aynı maaş satırına ödeme blokları eklenir. Çoklu maaş ödemelerinde `/` ile ayırma kullanılmaz; her ödeme kendi sütun grubuna yazılır.
+
+Desteklenen bloklar:
+
+- `Ana Maaş Ödeme Tarihi`
+- `Ana Maaş Ödeme Hesabı`
+- `Ana Maaş Ödeme Tutarı`
+- `Ana Maaş Ödeme Açıklaması`
+- `BES Ödeme Tarihi`
+- `BES Ödeme Hesabı`
+- `BES Ödeme Tutarı`
+- `BES Ödeme Açıklaması`
+- `Kalan Maaş Ödeme Tarihi`
+- `Kalan Maaş Ödeme Hesabı`
+- `Kalan Maaş Ödeme Tutarı`
+- `Kalan Maaş Ödeme Açıklaması`
+
+Bir bloktaki tutar boş veya sıfırsa o ödeme kaydı oluşturulmaz. Örneğin BES ödemesi yoksa BES sütunları boş bırakılabilir; sadece dolu tutarlı bloklar panelde ayrı ödeme kaydı olarak görünür.
 
 ### Ödeme Sütunları
 

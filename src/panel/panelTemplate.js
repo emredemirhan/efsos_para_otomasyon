@@ -341,6 +341,21 @@ function getPanelMarkup() {
             letter-spacing:-0.01em;
           ">Ödemeyi Başlat</button>
         </div>
+
+        <div id="ajans-gider-salary-actions" style="display:none;">
+          <button id="ajans-gider-salary" style="
+            padding:9px 14px;
+            background:${ACCENT};
+            color:#ffffff;
+            border:0;
+            border-radius:9px;
+            font-weight:600;
+            font-size:13px;
+            cursor:pointer;
+            box-shadow: 0 1px 0 rgba(15,23,42,.05);
+            letter-spacing:-0.01em;
+          ">Maaş Gideri Oluştur</button>
+        </div>
       </div>
     </div>
   `;
