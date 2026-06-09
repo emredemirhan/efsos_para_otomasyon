@@ -133,7 +133,7 @@ Header varsa tanınan örnek kolonlar:
 - `Fiş/Fatura Tarihi` / `Fatura Tarihi` / `Tarih`
 - `Ödeneceği Tarih` / `Ödeme Tarihi`
 - `Etiket` / `Tag`
-- `Ödeme Tutarı` / `Ödeme Hesabı` (ödeme akışı için ek sütunlar)
+- `Ödeme Tutarı` / `Ödeme Tarihi` / `Ödeme Hesabı` (ödeme akışı için ek sütunlar)
 
 ### Ödeme Sütunları
 
@@ -154,8 +154,8 @@ KİŞİ, EXCEL MARKA, KALEM TUTARI, KAYIT İSMİ
 ```
 
 Headersız 4 kolonlu formatta Paraşüt'e yazılan ana gider tutarı 3. kolondaki
-`KALEM TUTARI` değeridir. Kategori/marka kayıt isminin ilk marka kodundan
-türetilir; bu yoksa 2. kolondaki Excel marka değeri kullanılır. Eski 5 kolonlu
+`KALEM TUTARI` değeridir. Kategori/marka 2. kolondaki Excel marka/kategori
+değerinden alınır; kayıt isminden kategori türetilmez. Eski 5 kolonlu
 `KİŞİ, MARKA, GRUP/TOPLAM, KALEM TUTARI, KAYIT İSMİ` formatı da geriye dönük
 uyumluluk için hâlâ desteklenir; bu formatta GRUP/TOPLAM kolonu yok sayılır.
 

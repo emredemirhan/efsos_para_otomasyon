@@ -106,7 +106,7 @@ test("parseTable reads the multi-row five-column Excel paste", () => {
 
 test("parseTable reads the seven-column expense+payment format", () => {
   const rows = parseTable(
-    "NİL ÖZAKIN MEDİKAL\tGSK\t63.000,00\tVAKA PLATFORMU HAZIRLANMASI\t63.000,00\t05.06.2026\tZİRAAT AJANS A.Ş. TL (5004)",
+    "NİL ÖZAKIN MEDİKAL\tGSK\t63.000,00\tVAKA PLATFORMU HAZIRLANMASI\t63.000,00\tZİRAAT AJANS A.Ş. TL (5004)\t05.06.2026",
   );
 
   assert.equal(rows.length, 1);
@@ -117,6 +117,19 @@ test("parseTable reads the seven-column expense+payment format", () => {
   assert.equal(rows[0].payments[0].account, "ZİRAAT AJANS A.Ş. TL (5004)");
   assert.equal(formatDateTR(rows[0].payments[0].date), "05.06.2026");
   assert.equal(rows[0].payments[0].description, "VAKA PLATFORMU HAZIRLANMASI");
+});
+
+test("parseTable reads headerless eight-column rows (account before date)", () => {
+  const rows = parseTable(
+    "EDA DEDE\tASTRA ZENECA\t75.000,00\t75.000,00\tSOLUNUM EOS AKADEMİ FİLM 45 SN\t75.000,00\tEV TL\t5.06.2026",
+  );
+
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].supplier, "EDA DEDE");
+  assert.equal(rows[0].payments.length, 1);
+  assert.equal(rows[0].payments[0].amount, "75.000,00");
+  assert.equal(rows[0].payments[0].account, "EV TL");
+  assert.equal(formatDateTR(rows[0].payments[0].date), "05.06.2026");
 });
 
 test("buildPayments splits multiple payments by slash and zips date/account", () => {

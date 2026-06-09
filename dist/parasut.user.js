@@ -222,8 +222,8 @@
           "kalem_tutari",
           "kayit_ismi",
           "odeme_tutari",
-          "odeme_tarihi",
-          "odeme_hesabi"
+          "odeme_hesabi",
+          "odeme_tarihi"
         ],
         firstRowKeys,
         hasHeader: false,
@@ -239,8 +239,8 @@
           "kalem_tutari",
           "kayit_ismi",
           "odeme_tutari",
-          "odeme_tarihi",
-          "odeme_hesabi"
+          "odeme_hesabi",
+          "odeme_tarihi"
         ],
         firstRowKeys,
         hasHeader: false,
