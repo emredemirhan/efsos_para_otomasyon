@@ -80,25 +80,6 @@ function getSupplierHeaderName() {
   return el ? elementText(el) : "";
 }
 
-function getBillContactLink() {
-  return $("a[data-tid='contact']", getActiveAppDocument());
-}
-
-function getBillTitle() {
-  const show = $("[data-tns='purchase-bills-show']", getActiveAppDocument());
-  const heading = show ? show.querySelector("h1") : null;
-  return heading ? elementText(heading) : "";
-}
-
-function billMatches(record) {
-  if (!textMatches(getBillTitle(), record.itemName)) return false;
-
-  const contact = getBillContactLink();
-  if (contact && !textMatches(elementText(contact), record.supplier)) return false;
-
-  return true;
-}
-
 function getSuppliersSearchInput() {
   const root = getActiveAppDocument();
   return (
@@ -108,29 +89,46 @@ function getSuppliersSearchInput() {
   );
 }
 
-async function goToSuppliersList() {
-  if (getPaymentStage() === "suppliers" && getSuppliersSearchInput()) return;
+function findSuppliersNavLink() {
+  const roots = [getActiveAppDocument(), document];
+  try {
+    if (window.top && window.top.document) roots.push(window.top.document);
+  } catch {}
 
-  const root = getActiveAppDocument();
-  const navLink = $$("a[href*='/tedarikciler']", root).find((anchor) => {
-    const href = (anchor.getAttribute("href") || "").split("#")[0];
-    return /\/tedarikciler(?:\?|$)/.test(href);
-  });
-
-  if (navLink) {
-    navLink.click();
-  } else {
-    const firm = (getActiveAppDocument().location?.pathname || location.pathname).match(
-      /^\/(\d+)/,
-    );
-    if (!firm) throw new Error("Tedarikçiler sayfasına gidilemedi.");
-    location.href = `${location.origin}/${firm[1]}/tedarikciler`;
+  for (const root of roots) {
+    let link = null;
+    try {
+      link = $$("a[href*='/tedarikciler']", root).find((anchor) => {
+        const href = (anchor.getAttribute("href") || "").split("#")[0];
+        return /\/tedarikciler(?:\?|$)/.test(href);
+      });
+    } catch {
+      link = null;
+    }
+    if (link) return link;
   }
 
-  await waitFor(
-    () => getPaymentStage() === "suppliers" && getSuppliersSearchInput(),
-    10000,
-  );
+  return null;
+}
+
+async function goToSuppliersList() {
+  const isReady = () =>
+    getPaymentStage() === "suppliers" && Boolean(getSuppliersSearchInput());
+
+  if (isReady()) return;
+
+  // Aynı tedarikçide arka arkaya çalışırken sayfa bazen tedarikçi detayında
+  // kalıyor; native click Ember route'unu her sayfadan tetiklemediği için
+  // clickLink (jQuery trigger) ile birkaç kez deniyoruz.
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const navLink = findSuppliersNavLink();
+    if (navLink) clickLink(navLink);
+
+    const reached = await waitFor(isReady, 4000).catch(() => null);
+    if (reached) return;
+  }
+
+  throw new Error("Tedarikçiler sayfasına gidilemedi.");
 }
 
 function findSupplierRowLink(supplierName) {
@@ -170,30 +168,6 @@ async function searchAndOpenSupplier(supplierName) {
   await waitFor(() => textMatches(getSupplierHeaderName(), supplierName), 8000).catch(
     () => null,
   );
-}
-
-async function ensureSupplierDetail(record) {
-  const stage = getPaymentStage();
-
-  if (stage === "supplier-detail" && textMatches(getSupplierHeaderName(), record.supplier)) {
-    return;
-  }
-
-  if (stage === "bill") {
-    const contact = getBillContactLink();
-    if (contact && textMatches(elementText(contact), record.supplier)) {
-      clickLink(contact);
-      const reached = await waitFor(
-        () => getPaymentStage() === "supplier-detail",
-        10000,
-      ).catch(() => null);
-
-      if (reached && textMatches(getSupplierHeaderName(), record.supplier)) return;
-    }
-  }
-
-  await goToSuppliersList();
-  await searchAndOpenSupplier(record.supplier);
 }
 
 function findExpenseItemLink(itemName) {
@@ -554,17 +528,14 @@ export async function runPayment(record, onProgress = () => {}) {
   if (!record.itemName) throw new Error("Gider kalemi adı boş.");
   if (!record.amount) throw new Error("Ödeme tutarı boş.");
 
-  const stage = getPaymentStage();
-
-  if (stage === "bill" && billMatches(record)) {
-    onProgress("Aynı gider kalemindeyiz, ödeme formu açılıyor...");
-    await openPaymentForm();
-    await fillPaymentForm(record);
-    return;
-  }
+  // Her kayıt için tedarikçi listesinden sıfırdan ilerliyoruz. Kısayollar
+  // (aynı fatura/aynı tedarikçi tespiti) arka arkaya ödemede kafa karıştırıyordu;
+  // baştan akış her durumda güvenilir çalışıyor.
+  onProgress("Tedarikçiler listesine gidiliyor...");
+  await goToSuppliersList();
 
   onProgress(`Tedarikçi açılıyor: ${record.supplier}`);
-  await ensureSupplierDetail(record);
+  await searchAndOpenSupplier(record.supplier);
 
   onProgress(`Gider kalemi açılıyor: ${record.itemName}`);
   await openExpenseItem(record);

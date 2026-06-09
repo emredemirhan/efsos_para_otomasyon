@@ -1165,44 +1165,40 @@
     const el = $("[data-test-contact-show-header-name]", getActiveAppDocument());
     return el ? elementText(el) : "";
   }
-  function getBillContactLink() {
-    return $("a[data-tid='contact']", getActiveAppDocument());
-  }
-  function getBillTitle() {
-    const show = $("[data-tns='purchase-bills-show']", getActiveAppDocument());
-    const heading = show ? show.querySelector("h1") : null;
-    return heading ? elementText(heading) : "";
-  }
-  function billMatches(record) {
-    if (!textMatches(getBillTitle(), record.itemName)) return false;
-    const contact = getBillContactLink();
-    if (contact && !textMatches(elementText(contact), record.supplier)) return false;
-    return true;
-  }
   function getSuppliersSearchInput() {
     const root = getActiveAppDocument();
     return $("[data-test-search-box] input", root) || $$("input[placeholder='Ara...']", root).find(isVisible) || null;
   }
-  async function goToSuppliersList() {
-    if (getPaymentStage() === "suppliers" && getSuppliersSearchInput()) return;
-    const root = getActiveAppDocument();
-    const navLink = $$("a[href*='/tedarikciler']", root).find((anchor) => {
-      const href = (anchor.getAttribute("href") || "").split("#")[0];
-      return /\/tedarikciler(?:\?|$)/.test(href);
-    });
-    if (navLink) {
-      navLink.click();
-    } else {
-      const firm = (getActiveAppDocument().location?.pathname || location.pathname).match(
-        /^\/(\d+)/
-      );
-      if (!firm) throw new Error("Tedarik\xE7iler sayfas\u0131na gidilemedi.");
-      location.href = `${location.origin}/${firm[1]}/tedarikciler`;
+  function findSuppliersNavLink() {
+    const roots = [getActiveAppDocument(), document];
+    try {
+      if (window.top && window.top.document) roots.push(window.top.document);
+    } catch {
     }
-    await waitFor(
-      () => getPaymentStage() === "suppliers" && getSuppliersSearchInput(),
-      1e4
-    );
+    for (const root of roots) {
+      let link = null;
+      try {
+        link = $$("a[href*='/tedarikciler']", root).find((anchor) => {
+          const href = (anchor.getAttribute("href") || "").split("#")[0];
+          return /\/tedarikciler(?:\?|$)/.test(href);
+        });
+      } catch {
+        link = null;
+      }
+      if (link) return link;
+    }
+    return null;
+  }
+  async function goToSuppliersList() {
+    const isReady = () => getPaymentStage() === "suppliers" && Boolean(getSuppliersSearchInput());
+    if (isReady()) return;
+    for (let attempt = 0; attempt < 4; attempt++) {
+      const navLink = findSuppliersNavLink();
+      if (navLink) clickLink(navLink);
+      const reached = await waitFor(isReady, 4e3).catch(() => null);
+      if (reached) return;
+    }
+    throw new Error("Tedarik\xE7iler sayfas\u0131na gidilemedi.");
   }
   function findSupplierRowLink(supplierName) {
     const root = getActiveAppDocument();
@@ -1234,25 +1230,6 @@
     await waitFor(() => textMatches(getSupplierHeaderName(), supplierName), 8e3).catch(
       () => null
     );
-  }
-  async function ensureSupplierDetail(record) {
-    const stage = getPaymentStage();
-    if (stage === "supplier-detail" && textMatches(getSupplierHeaderName(), record.supplier)) {
-      return;
-    }
-    if (stage === "bill") {
-      const contact = getBillContactLink();
-      if (contact && textMatches(elementText(contact), record.supplier)) {
-        clickLink(contact);
-        const reached = await waitFor(
-          () => getPaymentStage() === "supplier-detail",
-          1e4
-        ).catch(() => null);
-        if (reached && textMatches(getSupplierHeaderName(), record.supplier)) return;
-      }
-    }
-    await goToSuppliersList();
-    await searchAndOpenSupplier(record.supplier);
   }
   function findExpenseItemLink(itemName) {
     const root = getActiveAppDocument();
@@ -1528,15 +1505,10 @@
     if (!record.supplier) throw new Error("Tedarik\xE7i ad\u0131 bo\u015F.");
     if (!record.itemName) throw new Error("Gider kalemi ad\u0131 bo\u015F.");
     if (!record.amount) throw new Error("\xD6deme tutar\u0131 bo\u015F.");
-    const stage = getPaymentStage();
-    if (stage === "bill" && billMatches(record)) {
-      onProgress("Ayn\u0131 gider kalemindeyiz, \xF6deme formu a\xE7\u0131l\u0131yor...");
-      await openPaymentForm();
-      await fillPaymentForm(record);
-      return;
-    }
+    onProgress("Tedarik\xE7iler listesine gidiliyor...");
+    await goToSuppliersList();
     onProgress(`Tedarik\xE7i a\xE7\u0131l\u0131yor: ${record.supplier}`);
-    await ensureSupplierDetail(record);
+    await searchAndOpenSupplier(record.supplier);
     onProgress(`Gider kalemi a\xE7\u0131l\u0131yor: ${record.itemName}`);
     await openExpenseItem(record);
     onProgress("\xD6deme formu a\xE7\u0131l\u0131yor...");
