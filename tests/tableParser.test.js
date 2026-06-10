@@ -283,6 +283,60 @@ test("getSalaryPaymentRecords reads separate salary payment column groups", () =
   assert.equal(records[2].amount, "30.000,00");
 });
 
+test("getSalaryPaymentRecords filters salary payment groups by mode", () => {
+  const sample = [
+    [
+      "Çalışan",
+      "Kayıt İsmi",
+      "Hak Ediş Tarihi",
+      "Toplam Tutar",
+      "Ödeneceği Tarih",
+      "Ana Maaş Ödeme Tarihi",
+      "Ana Maaş Ödeme Hesabı",
+      "Ana Maaş Ödeme Tutarı",
+      "BES Ödeme Tarihi",
+      "BES Ödeme Hesabı",
+      "BES Ödeme Tutarı",
+      "Kalan Maaş Ödeme Tarihi",
+      "Kalan Maaş Ödeme Hesabı",
+      "Kalan Maaş Ödeme Tutarı",
+    ].join("\t"),
+    [
+      "Emre Demirhan",
+      "2026 Mayıs maaşı",
+      "31.05.2026",
+      "90.000,00",
+      "05.06.2026",
+      "05.06.2026",
+      "EV TL",
+      "50.000,00",
+      "10.06.2026",
+      "BES TL",
+      "10.000,00",
+      "20.06.2026",
+      "GARANTİ TL",
+      "30.000,00",
+    ].join("\t"),
+  ].join("\n");
+
+  const mainBes = getSalaryPaymentRecords(sample, {
+    paymentKinds: ["Ana Maaş", "BES"],
+  });
+  const remaining = getSalaryPaymentRecords(sample, {
+    paymentKinds: ["Kalan Maaş"],
+  });
+
+  assert.deepEqual(
+    mainBes.map((record) => record.paymentKind),
+    ["Ana Maaş", "BES"],
+  );
+  assert.equal(mainBes[0].paymentCount, 2);
+  assert.equal(mainBes[1].paymentCount, 2);
+  assert.equal(remaining.length, 1);
+  assert.equal(remaining[0].paymentKind, "Kalan Maaş");
+  assert.equal(remaining[0].paymentCount, 1);
+});
+
 test("getSalaryPaymentRecords skips empty salary payment groups", () => {
   const sample = [
     [

@@ -99,6 +99,60 @@ function getPanelMarkup() {
         <span id="ajans-gider-help-content"></span>
       </div>
 
+      <div id="ajans-gider-salary-tabs" hidden style="
+        display:grid;
+        grid-template-columns:1fr 1fr 1fr;
+        gap:4px;
+        margin-bottom:10px;
+        padding:3px;
+        background:${SOFT_BG};
+        border:1px solid ${BORDER};
+        border-radius:9px;
+      ">
+        <button type="button" data-salary-mode="expense" style="
+          min-width:0;
+          height:30px;
+          padding:0 6px;
+          border:0;
+          border-radius:7px;
+          background:transparent;
+          color:${MUTED};
+          cursor:pointer;
+          font-size:11px;
+          font-weight:600;
+          font-family:inherit;
+          line-height:1.15;
+        ">Gider</button>
+        <button type="button" data-salary-mode="main-bes" style="
+          min-width:0;
+          height:30px;
+          padding:0 6px;
+          border:0;
+          border-radius:7px;
+          background:transparent;
+          color:${MUTED};
+          cursor:pointer;
+          font-size:11px;
+          font-weight:600;
+          font-family:inherit;
+          line-height:1.15;
+        ">Ana+BES</button>
+        <button type="button" data-salary-mode="remaining" style="
+          min-width:0;
+          height:30px;
+          padding:0 6px;
+          border:0;
+          border-radius:7px;
+          background:transparent;
+          color:${MUTED};
+          cursor:pointer;
+          font-size:11px;
+          font-weight:600;
+          font-family:inherit;
+          line-height:1.15;
+        ">Kalan</button>
+      </div>
+
       <div id="ajans-gider-data-collapsed" hidden style="
         display:flex;
         align-items:center;

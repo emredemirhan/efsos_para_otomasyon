@@ -18,6 +18,7 @@
   var STORAGE_INDEX_KEY = "ajans-gider-selected-index-v1";
   var STORAGE_POS_KEY = "ajans-gider-panel-pos-v1";
   var STORAGE_MIN_KEY = "ajans-gider-panel-minimized-v1";
+  var STORAGE_SALARY_MODE_KEY = "ajans-gider-salary-mode-v1";
 
   // src/core/format.js
   function parseAmount(value) {
@@ -562,11 +563,14 @@
     });
     return records;
   }
-  function getSalaryPaymentRecords(text) {
+  function getSalaryPaymentRecords(text, options = {}) {
     const rows = Array.isArray(text) ? text : parseTable(text);
     const records = [];
+    const allowedKinds = Array.isArray(options.paymentKinds) ? new Set(options.paymentKinds) : null;
     rows.forEach((row, rowIndex) => {
-      const payments = Array.isArray(row.salaryPayments) ? row.salaryPayments : [];
+      const payments = (Array.isArray(row.salaryPayments) ? row.salaryPayments : []).filter(
+        (payment) => !allowedKinds || allowedKinds.has(payment.kind)
+      );
       payments.forEach((payment, paymentIndex) => {
         records.push({
           employee: row.supplier,
@@ -1948,6 +1952,32 @@
       1500
     ).catch(() => null);
   }
+  function findSalaryItemLink(salaryTitle) {
+    const root = getActiveAppDocument();
+    const salaryLinks = $$("a[href]", root).filter(
+      (a) => /\/(?:giderler\/)?maaslar\/\d+/.test(hrefPath2(a)) && isVisible(a)
+    );
+    const byHref = pickAnchorByText2(
+      salaryLinks,
+      salaryTitle,
+      "[data-test-row-description]"
+    );
+    if (byHref) return byHref;
+    const descriptions = $$("[data-test-row-description]", root).filter(isVisible);
+    const target = findByText2(descriptions, salaryTitle);
+    return target ? target.closest("a[href]") || target.closest("a") : null;
+  }
+  async function openSalaryItem(salaryTitle) {
+    const link = await waitFor(() => findSalaryItemLink(salaryTitle), 9e3).catch(
+      () => null
+    );
+    if (!link) {
+      throw new Error(`Maa\u015F gider kayd\u0131 bulunamad\u0131: ${salaryTitle}`);
+    }
+    clickLink2(link);
+    await waitFor(() => getSalaryStage() === "salary-detail", 12e3);
+    await sleep(500);
+  }
   function findVisibleActionContaining(text, options = {}) {
     const wanted = norm(text);
     const selector = options.selector || "button, a";
@@ -2164,9 +2194,17 @@
   async function runSalaryPayment(record, onProgress = () => {
   }) {
     if (!record) throw new Error("Maa\u015F \xF6deme kayd\u0131 yok.");
+    if (!record.employee) throw new Error("\xC7al\u0131\u015Fan ad\u0131 bo\u015F.");
+    if (!record.salaryTitle) throw new Error("Maa\u015F kay\u0131t ismi bo\u015F.");
     if (!record.amount) throw new Error("Maa\u015F \xF6deme tutar\u0131 bo\u015F.");
     if (!record.date) throw new Error("Maa\u015F \xF6deme tarihi bo\u015F.");
     if (!record.account) throw new Error("Maa\u015F \xF6deme hesab\u0131 bo\u015F.");
+    onProgress("\xC7al\u0131\u015Fanlar listesine gidiliyor...");
+    await goToEmployeesList();
+    onProgress(`\xC7al\u0131\u015Fan a\xE7\u0131l\u0131yor: ${record.employee}`);
+    await searchAndOpenEmployee(record.employee);
+    onProgress(`Maa\u015F kayd\u0131 a\xE7\u0131l\u0131yor: ${record.salaryTitle}`);
+    await openSalaryItem(record.salaryTitle);
     onProgress("Maa\u015F \xF6deme formu a\xE7\u0131l\u0131yor...");
     await openSalaryPaymentForm();
     onProgress("Maa\u015F \xF6deme alanlar\u0131 dolduruluyor...");
@@ -2242,6 +2280,14 @@
   }
   function clearSelectionState() {
     localStorage.removeItem(STORAGE_INDEX_KEY);
+  }
+  function getSalaryMode() {
+    const value = localStorage.getItem(STORAGE_SALARY_MODE_KEY);
+    return ["expense", "main-bes", "remaining"].includes(value) ? value : "expense";
+  }
+  function setSalaryMode(mode) {
+    const safeMode = ["expense", "main-bes", "remaining"].includes(mode) ? mode : "expense";
+    localStorage.setItem(STORAGE_SALARY_MODE_KEY, safeMode);
   }
   function isPanelMinimized() {
     return localStorage.getItem(STORAGE_MIN_KEY) === "1";
@@ -2495,6 +2541,60 @@
         line-height:1.5;
       ">
         <span id="ajans-gider-help-content"></span>
+      </div>
+
+      <div id="ajans-gider-salary-tabs" hidden style="
+        display:grid;
+        grid-template-columns:1fr 1fr 1fr;
+        gap:4px;
+        margin-bottom:10px;
+        padding:3px;
+        background:${SOFT_BG2};
+        border:1px solid ${BORDER2};
+        border-radius:9px;
+      ">
+        <button type="button" data-salary-mode="expense" style="
+          min-width:0;
+          height:30px;
+          padding:0 6px;
+          border:0;
+          border-radius:7px;
+          background:transparent;
+          color:${MUTED2};
+          cursor:pointer;
+          font-size:11px;
+          font-weight:600;
+          font-family:inherit;
+          line-height:1.15;
+        ">Gider</button>
+        <button type="button" data-salary-mode="main-bes" style="
+          min-width:0;
+          height:30px;
+          padding:0 6px;
+          border:0;
+          border-radius:7px;
+          background:transparent;
+          color:${MUTED2};
+          cursor:pointer;
+          font-size:11px;
+          font-weight:600;
+          font-family:inherit;
+          line-height:1.15;
+        ">Ana+BES</button>
+        <button type="button" data-salary-mode="remaining" style="
+          min-width:0;
+          height:30px;
+          padding:0 6px;
+          border:0;
+          border-radius:7px;
+          background:transparent;
+          color:${MUTED2};
+          cursor:pointer;
+          font-size:11px;
+          font-weight:600;
+          font-family:inherit;
+          line-height:1.15;
+        ">Kalan</button>
       </div>
 
       <div id="ajans-gider-data-collapsed" hidden style="
@@ -2937,10 +3037,15 @@
     salary: "Maa\u015F Doldurucu",
     idle: "Gider / \xD6deme Doldurucu"
   };
+  var SALARY_MODE_LABELS = {
+    expense: "Gider",
+    "main-bes": "Ana+BES",
+    remaining: "Kalan"
+  };
   var FLOW_HELP = {
     expense: "Excel sat\u0131rlar\u0131n\u0131 kopyalay\u0131p a\u015Fa\u011F\u0131ya yap\u0131\u015Ft\u0131r. Sayfa de\u011Fi\u015Fse de veri kal\u0131r.<br><b>S\xFCtunlar:</b> Ki\u015Fi \xB7 Marka \xB7 Tutar \xB7 Kay\u0131t \u0130smi<br>Se\xE7ili kayd\u0131 <b>Ana Gideri Doldur</b> ile forma yazar; kaydetmeyi sen yapars\u0131n.",
     payment: "Excel sat\u0131rlar\u0131n\u0131 kopyalay\u0131p a\u015Fa\u011F\u0131ya yap\u0131\u015Ft\u0131r. Sayfa de\u011Fi\u015Fse de veri kal\u0131r.<br><b>\xD6deme s\xFCtunlar\u0131:</b> \xD6deme Tutar\u0131 \xB7 \xD6deme Tarihi \xB7 \xD6deme Hesab\u0131<br>Birden fazla \xF6deme i\xE7in tutar/tarih/hesab\u0131 <b>/</b> ile ay\u0131r. <b>\xD6demeyi Ba\u015Flat</b> tedarik\xE7iyi bulup \xF6deme formunu doldurur; son <b>\xD6DEME EKLE</b>'ye sen basars\u0131n.",
-    salary: "Excel sat\u0131rlar\u0131n\u0131 kopyalay\u0131p a\u015Fa\u011F\u0131ya yap\u0131\u015Ft\u0131r. Sayfa de\u011Fi\u015Fse de veri kal\u0131r.<br><b>S\xFCtunlar:</b> \xC7al\u0131\u015Fan \xB7 Kay\u0131t \u0130smi \xB7 Hak Edi\u015F Tarihi \xB7 Toplam Tutar \xB7 \xD6denece\u011Fi Tarih<br>Maa\u015F detay sayfas\u0131nda \xF6deme i\xE7in <b>Ana Maa\u015F / BES / Kalan Maa\u015F</b> bloklar\u0131nda tarih, hesap, tutar ve a\xE7\u0131klama s\xFCtunlar\u0131 kullan\u0131l\u0131r. Bo\u015F tutarl\u0131 blok atlan\u0131r; son <b>\xD6DEME EKLE</b>'ye sen basars\u0131n.",
+    salary: "Excel sat\u0131rlar\u0131n\u0131 kopyalay\u0131p a\u015Fa\u011F\u0131ya yap\u0131\u015Ft\u0131r. Sayfa de\u011Fi\u015Fse de veri kal\u0131r.<br><b>Gider:</b> \xC7al\u0131\u015Fan \xB7 Kay\u0131t \u0130smi \xB7 Hak Edi\u015F Tarihi \xB7 Toplam Tutar \xB7 \xD6denece\u011Fi Tarih<br><b>Ana+BES / Kalan:</b> Kay\u0131t \u0130smi ile maa\u015F kayd\u0131 bulunur, ilgili \xF6deme blo\u011Fu detay sayfas\u0131na yaz\u0131l\u0131r; son <b>\xD6DEME EKLE</b>'ye sen basars\u0131n.",
     idle: "Excel sat\u0131rlar\u0131n\u0131 kopyalay\u0131p a\u015Fa\u011F\u0131ya yap\u0131\u015Ft\u0131r. Sayfa de\u011Fi\u015Fse de veri kal\u0131r.<br>Gider formu, tedarik\xE7i sayfas\u0131 veya \xE7al\u0131\u015Fanlar sayfas\u0131na gidince ilgili ara\xE7 \xE7\u0131kar."
   };
   function getRecordKind(flow) {
@@ -2948,12 +3053,26 @@
     if (flow === "salary") return "salary";
     return "expense";
   }
-  function updateFlowVisibility(flow) {
+  function updateSalaryTabs(flow, salaryMode) {
+    const tabs = $("#ajans-gider-salary-tabs");
+    if (!tabs) return;
+    tabs.hidden = flow !== "salary";
+    tabs.style.display = flow === "salary" ? "grid" : "none";
+    tabs.querySelectorAll("[data-salary-mode]").forEach((button) => {
+      const isActive = button.getAttribute("data-salary-mode") === salaryMode;
+      button.style.background = isActive ? "#ffffff" : "transparent";
+      button.style.color = isActive ? PANEL_COLORS.TEXT : PANEL_COLORS.MUTED;
+      button.style.boxShadow = isActive ? "0 1px 2px rgba(15,23,42,.08)" : "none";
+      button.setAttribute("aria-pressed", isActive ? "true" : "false");
+    });
+  }
+  function updateFlowVisibility(flow, options = {}) {
     const expenseActions = $("#ajans-gider-expense-actions");
     const paymentActions = $("#ajans-gider-payment-actions");
     const salaryActions = $("#ajans-gider-salary-actions");
     const titleText = $("#ajans-gider-title-text");
     const helpContent = $("#ajans-gider-help-content");
+    const salaryMode = options.salaryMode || "expense";
     if (expenseActions) {
       expenseActions.style.display = flow === "expense" ? "block" : "none";
     }
@@ -2964,11 +3083,13 @@
       salaryActions.style.display = flow === "salary" ? "block" : "none";
     }
     if (titleText) {
-      titleText.textContent = FLOW_TITLES[flow] || FLOW_TITLES.idle;
+      const title = FLOW_TITLES[flow] || FLOW_TITLES.idle;
+      titleText.textContent = flow === "salary" ? `${title} \xB7 ${SALARY_MODE_LABELS[salaryMode]}` : title;
     }
     if (helpContent) {
       helpContent.innerHTML = FLOW_HELP[flow] || FLOW_HELP.idle;
     }
+    updateSalaryTabs(flow, salaryMode);
   }
 
   // src/panel/panelRecordCard.js
@@ -3162,6 +3283,15 @@
   var isHelpOpen = false;
   var paymentAwaitingManualSave = false;
   var salaryPaymentAwaitingManualSave = false;
+  var SALARY_PAYMENT_MODE_KINDS = {
+    "main-bes": ["Ana Maa\u015F", "BES"],
+    remaining: ["Kalan Maa\u015F"]
+  };
+  var SALARY_MODE_BUTTON_TEXT = {
+    expense: "Maa\u015F Gideri Olu\u015Ftur",
+    "main-bes": "Ana Maa\u015F / BES \xD6demesi",
+    remaining: "Kalan Maa\u015F \xD6demesi"
+  };
   function getRowsFromTextarea() {
     const textarea = $("#ajans-gider-textarea");
     if (!textarea) return [];
@@ -3190,8 +3320,14 @@
       return { kind: "payment", items: getPaymentRecords(rows) };
     }
     if (flow === "salary") {
-      if (getPageDetectionSnapshot().salaryStage === "salary-detail") {
-        return { kind: "salary-payment", items: getSalaryPaymentRecords(rows) };
+      const salaryMode = getSalaryMode();
+      if (salaryMode !== "expense") {
+        return {
+          kind: "salary-payment",
+          items: getSalaryPaymentRecords(rows, {
+            paymentKinds: SALARY_PAYMENT_MODE_KINDS[salaryMode]
+          })
+        };
       }
       return { kind: "salary", items: getSalaryRecords(rows) };
     }
@@ -3209,7 +3345,8 @@
     const select = $("#ajans-gider-row-select");
     if (!textarea) return;
     const flow = getCurrentFlow();
-    updateFlowVisibility(flow);
+    const salaryMode = getSalaryMode();
+    updateFlowVisibility(flow, { salaryMode });
     applyHelpState(isHelpOpen);
     let records = {
       kind: getRecordKind(flow),
@@ -3260,10 +3397,11 @@
         );
       } else if (flow === "salary") {
         const hasText = String(textarea.value || "").trim().length > 0;
-        const isSalaryDetail = getPageDetectionSnapshot().salaryStage === "salary-detail";
         let message = "\xC7al\u0131\u015Fanlar sayfas\u0131ndas\u0131n. Excel'i yap\u0131\u015Ft\u0131r\u0131nca maa\u015F giderini olu\u015Fturabilirsin.";
-        if (isSalaryDetail) {
-          message = hasText ? "Maa\u015F \xF6deme kayd\u0131 yok. Excel'de Ana Maa\u015F / BES / Kalan Maa\u015F \xF6deme s\xFCtunlar\u0131n\u0131 kontrol et." : "Maa\u015F detay sayfas\u0131ndas\u0131n. Excel'i yap\u0131\u015Ft\u0131r\u0131nca maa\u015F \xF6demelerini doldurabilirsin.";
+        if (salaryMode === "main-bes") {
+          message = hasText ? "Ana Maa\u015F / BES \xF6deme kayd\u0131 yok. Excel'de Ana Maa\u015F ve BES \xF6deme s\xFCtunlar\u0131n\u0131 kontrol et." : "Ana+BES sekmesindesin. Excel'i yap\u0131\u015Ft\u0131r\u0131nca kay\u0131t ismiyle maa\u015F\u0131 bulup \xF6demeyi doldurabilirsin.";
+        } else if (salaryMode === "remaining") {
+          message = hasText ? "Kalan maa\u015F \xF6deme kayd\u0131 yok. Excel'de Kalan Maa\u015F \xF6deme s\xFCtunlar\u0131n\u0131 kontrol et." : "Kalan sekmesindesin. Excel'i yap\u0131\u015Ft\u0131r\u0131nca kay\u0131t ismiyle maa\u015F\u0131 bulup kalan \xF6demeyi doldurabilirsin.";
         } else if (hasText) {
           message = "Maa\u015F kayd\u0131 yok. Excel'de \xC7al\u0131\u015Fan / Kay\u0131t \u0130smi / Hak Edi\u015F Tarihi / Toplam Tutar / \xD6denece\u011Fi Tarih s\xFCtunlar\u0131n\u0131 kontrol et.";
         }
@@ -3291,7 +3429,7 @@
     } else if (flow === "salary") {
       const salaryButton = $("#ajans-gider-salary");
       if (salaryButton && !isRunningSalary) {
-        salaryButton.textContent = kind === "salary-payment" ? "Maa\u015F \xD6demesi Doldur" : "Maa\u015F Gideri Olu\u015Ftur";
+        salaryButton.textContent = SALARY_MODE_BUTTON_TEXT[salaryMode];
       }
       if (kind === "salary-payment" && salaryPaymentAwaitingManualSave && isSalaryPaymentFormOpen()) {
         setStatus(
@@ -3315,6 +3453,7 @@
     const minimizeButton = $("#ajans-gider-minimize");
     const helpButton = $("#ajans-gider-help-toggle");
     const editDataButton = $("#ajans-gider-edit-data");
+    const salaryTabs = $("#ajans-gider-salary-tabs");
     textarea.value = localStorage.getItem(STORAGE_TEXT_KEY) || "";
     installDebugHelpers();
     isDataEditorOpen = String(textarea.value || "").trim().length === 0;
@@ -3372,6 +3511,17 @@
         applyDataEditorState(isDataEditorOpen);
         const ta = $("#ajans-gider-textarea");
         if (ta) ta.focus();
+      });
+    }
+    if (salaryTabs) {
+      salaryTabs.querySelectorAll("[data-salary-mode]").forEach((button) => {
+        button.addEventListener("click", () => {
+          const mode = button.getAttribute("data-salary-mode");
+          if (mode === getSalaryMode()) return;
+          setSalaryMode(mode);
+          setSelectedIndex(0);
+          syncPanelRows();
+        });
       });
     }
     $("#ajans-gider-prev").addEventListener("click", () => {
@@ -3475,7 +3625,7 @@
         }
         if (!records.length) {
           throw new Error(
-            isSalaryPayment ? "Maa\u015F \xF6deme kayd\u0131 bulunamad\u0131. Excel'de Ana Maa\u015F / BES / Kalan Maa\u015F \xF6deme s\xFCtunlar\u0131 var m\u0131?" : "Maa\u015F kayd\u0131 bulunamad\u0131. Excel'de \xC7al\u0131\u015Fan / Kay\u0131t \u0130smi / Hak Edi\u015F Tarihi / Toplam Tutar / \xD6denece\u011Fi Tarih s\xFCtunlar\u0131 var m\u0131?"
+            isSalaryPayment ? getSalaryMode() === "main-bes" ? "Ana Maa\u015F / BES \xF6deme kayd\u0131 bulunamad\u0131. Excel'de Ana Maa\u015F ve BES \xF6deme s\xFCtunlar\u0131 var m\u0131?" : "Kalan maa\u015F \xF6deme kayd\u0131 bulunamad\u0131. Excel'de Kalan Maa\u015F \xF6deme s\xFCtunlar\u0131 var m\u0131?" : "Maa\u015F kayd\u0131 bulunamad\u0131. Excel'de \xC7al\u0131\u015Fan / Kay\u0131t \u0130smi / Hak Edi\u015F Tarihi / Toplam Tutar / \xD6denece\u011Fi Tarih s\xFCtunlar\u0131 var m\u0131?"
           );
         }
         const index = getSelectedIndex(records.length);
@@ -3505,7 +3655,7 @@
       } finally {
         isRunningSalary = false;
         setSalaryButtonLoading(button, false);
-        button.textContent = isSalaryPayment ? "Maa\u015F \xD6demesi Doldur" : "Maa\u015F Gideri Olu\u015Ftur";
+        button.textContent = SALARY_MODE_BUTTON_TEXT[getSalaryMode()];
       }
     });
     minimizeButton.addEventListener("click", () => {

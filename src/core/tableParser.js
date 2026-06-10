@@ -511,12 +511,17 @@ export function getPaymentRecords(text) {
   return records;
 }
 
-export function getSalaryPaymentRecords(text) {
+export function getSalaryPaymentRecords(text, options = {}) {
   const rows = Array.isArray(text) ? text : parseTable(text);
   const records = [];
+  const allowedKinds = Array.isArray(options.paymentKinds)
+    ? new Set(options.paymentKinds)
+    : null;
 
   rows.forEach((row, rowIndex) => {
-    const payments = Array.isArray(row.salaryPayments) ? row.salaryPayments : [];
+    const payments = (Array.isArray(row.salaryPayments) ? row.salaryPayments : []).filter(
+      (payment) => !allowedKinds || allowedKinds.has(payment.kind),
+    );
 
     payments.forEach((payment, paymentIndex) => {
       records.push({

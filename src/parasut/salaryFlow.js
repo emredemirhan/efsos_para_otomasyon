@@ -279,6 +279,38 @@ async function searchAndOpenEmployee(employeeName) {
   ).catch(() => null);
 }
 
+function findSalaryItemLink(salaryTitle) {
+  const root = getActiveAppDocument();
+
+  const salaryLinks = $$("a[href]", root).filter(
+    (a) => /\/(?:giderler\/)?maaslar\/\d+/.test(hrefPath(a)) && isVisible(a),
+  );
+  const byHref = pickAnchorByText(
+    salaryLinks,
+    salaryTitle,
+    "[data-test-row-description]",
+  );
+  if (byHref) return byHref;
+
+  const descriptions = $$("[data-test-row-description]", root).filter(isVisible);
+  const target = findByText(descriptions, salaryTitle);
+  return target ? target.closest("a[href]") || target.closest("a") : null;
+}
+
+async function openSalaryItem(salaryTitle) {
+  const link = await waitFor(() => findSalaryItemLink(salaryTitle), 9000).catch(
+    () => null,
+  );
+
+  if (!link) {
+    throw new Error(`Maaş gider kaydı bulunamadı: ${salaryTitle}`);
+  }
+
+  clickLink(link);
+  await waitFor(() => getSalaryStage() === "salary-detail", 12000);
+  await sleep(500);
+}
+
 function findVisibleActionContaining(text, options = {}) {
   const wanted = norm(text);
   const selector = options.selector || "button, a";
@@ -588,9 +620,20 @@ export async function runSalaryExpense(record, onProgress = () => {}) {
 
 export async function runSalaryPayment(record, onProgress = () => {}) {
   if (!record) throw new Error("Maaş ödeme kaydı yok.");
+  if (!record.employee) throw new Error("Çalışan adı boş.");
+  if (!record.salaryTitle) throw new Error("Maaş kayıt ismi boş.");
   if (!record.amount) throw new Error("Maaş ödeme tutarı boş.");
   if (!record.date) throw new Error("Maaş ödeme tarihi boş.");
   if (!record.account) throw new Error("Maaş ödeme hesabı boş.");
+
+  onProgress("Çalışanlar listesine gidiliyor...");
+  await goToEmployeesList();
+
+  onProgress(`Çalışan açılıyor: ${record.employee}`);
+  await searchAndOpenEmployee(record.employee);
+
+  onProgress(`Maaş kaydı açılıyor: ${record.salaryTitle}`);
+  await openSalaryItem(record.salaryTitle);
 
   onProgress("Maaş ödeme formu açılıyor...");
   await openSalaryPaymentForm();

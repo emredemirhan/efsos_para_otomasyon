@@ -39,9 +39,11 @@ import {
 } from "./panelRecordCard.js";
 import {
   clearSelectionState,
+  getSalaryMode,
   getSelectedIndex,
   savePanelPosition,
   setPanelMinimized,
+  setSalaryMode,
   setSelectedIndex,
 } from "./storage.js";
 
@@ -53,6 +55,17 @@ let isDataEditorOpen = true;
 let isHelpOpen = false;
 let paymentAwaitingManualSave = false;
 let salaryPaymentAwaitingManualSave = false;
+
+const SALARY_PAYMENT_MODE_KINDS = {
+  "main-bes": ["Ana Maaş", "BES"],
+  remaining: ["Kalan Maaş"],
+};
+
+const SALARY_MODE_BUTTON_TEXT = {
+  expense: "Maaş Gideri Oluştur",
+  "main-bes": "Ana Maaş / BES Ödemesi",
+  remaining: "Kalan Maaş Ödemesi",
+};
 
 function getRowsFromTextarea() {
   const textarea = $("#ajans-gider-textarea");
@@ -91,8 +104,15 @@ function getActiveRecords(flow = getCurrentFlow()) {
   }
 
   if (flow === "salary") {
-    if (getPageDetectionSnapshot().salaryStage === "salary-detail") {
-      return { kind: "salary-payment", items: getSalaryPaymentRecords(rows) };
+    const salaryMode = getSalaryMode();
+
+    if (salaryMode !== "expense") {
+      return {
+        kind: "salary-payment",
+        items: getSalaryPaymentRecords(rows, {
+          paymentKinds: SALARY_PAYMENT_MODE_KINDS[salaryMode],
+        }),
+      };
     }
 
     return { kind: "salary", items: getSalaryRecords(rows) };
@@ -118,7 +138,8 @@ function syncPanelRows() {
   if (!textarea) return;
 
   const flow = getCurrentFlow();
-  updateFlowVisibility(flow);
+  const salaryMode = getSalaryMode();
+  updateFlowVisibility(flow, { salaryMode });
   applyHelpState(isHelpOpen);
 
   let records = {
@@ -188,15 +209,17 @@ function syncPanelRows() {
       );
     } else if (flow === "salary") {
       const hasText = String(textarea.value || "").trim().length > 0;
-      const isSalaryDetail =
-        getPageDetectionSnapshot().salaryStage === "salary-detail";
       let message =
         "Çalışanlar sayfasındasın. Excel'i yapıştırınca maaş giderini oluşturabilirsin.";
 
-      if (isSalaryDetail) {
+      if (salaryMode === "main-bes") {
         message = hasText
-          ? "Maaş ödeme kaydı yok. Excel'de Ana Maaş / BES / Kalan Maaş ödeme sütunlarını kontrol et."
-          : "Maaş detay sayfasındasın. Excel'i yapıştırınca maaş ödemelerini doldurabilirsin.";
+          ? "Ana Maaş / BES ödeme kaydı yok. Excel'de Ana Maaş ve BES ödeme sütunlarını kontrol et."
+          : "Ana+BES sekmesindesin. Excel'i yapıştırınca kayıt ismiyle maaşı bulup ödemeyi doldurabilirsin.";
+      } else if (salaryMode === "remaining") {
+        message = hasText
+          ? "Kalan maaş ödeme kaydı yok. Excel'de Kalan Maaş ödeme sütunlarını kontrol et."
+          : "Kalan sekmesindesin. Excel'i yapıştırınca kayıt ismiyle maaşı bulup kalan ödemeyi doldurabilirsin.";
       } else if (hasText) {
         message =
           "Maaş kaydı yok. Excel'de Çalışan / Kayıt İsmi / Hak Ediş Tarihi / Toplam Tutar / Ödeneceği Tarih sütunlarını kontrol et.";
@@ -231,8 +254,7 @@ function syncPanelRows() {
   } else if (flow === "salary") {
     const salaryButton = $("#ajans-gider-salary");
     if (salaryButton && !isRunningSalary) {
-      salaryButton.textContent =
-        kind === "salary-payment" ? "Maaş Ödemesi Doldur" : "Maaş Gideri Oluştur";
+      salaryButton.textContent = SALARY_MODE_BUTTON_TEXT[salaryMode];
     }
 
     if (
@@ -263,6 +285,7 @@ function registerPanelEvents(panel) {
   const minimizeButton = $("#ajans-gider-minimize");
   const helpButton = $("#ajans-gider-help-toggle");
   const editDataButton = $("#ajans-gider-edit-data");
+  const salaryTabs = $("#ajans-gider-salary-tabs");
 
   textarea.value = localStorage.getItem(STORAGE_TEXT_KEY) || "";
   installDebugHelpers();
@@ -334,6 +357,19 @@ function registerPanelEvents(panel) {
       applyDataEditorState(isDataEditorOpen);
       const ta = $("#ajans-gider-textarea");
       if (ta) ta.focus();
+    });
+  }
+
+  if (salaryTabs) {
+    salaryTabs.querySelectorAll("[data-salary-mode]").forEach((button) => {
+      button.addEventListener("click", () => {
+        const mode = button.getAttribute("data-salary-mode");
+        if (mode === getSalaryMode()) return;
+
+        setSalaryMode(mode);
+        setSelectedIndex(0);
+        syncPanelRows();
+      });
     });
   }
 
@@ -472,7 +508,9 @@ function registerPanelEvents(panel) {
       if (!records.length) {
         throw new Error(
           isSalaryPayment
-            ? "Maaş ödeme kaydı bulunamadı. Excel'de Ana Maaş / BES / Kalan Maaş ödeme sütunları var mı?"
+            ? getSalaryMode() === "main-bes"
+              ? "Ana Maaş / BES ödeme kaydı bulunamadı. Excel'de Ana Maaş ve BES ödeme sütunları var mı?"
+              : "Kalan maaş ödeme kaydı bulunamadı. Excel'de Kalan Maaş ödeme sütunları var mı?"
             : "Maaş kaydı bulunamadı. Excel'de Çalışan / Kayıt İsmi / Hak Ediş Tarihi / Toplam Tutar / Ödeneceği Tarih sütunları var mı?",
         );
       }
@@ -513,9 +551,7 @@ function registerPanelEvents(panel) {
     } finally {
       isRunningSalary = false;
       setSalaryButtonLoading(button, false);
-      button.textContent = isSalaryPayment
-        ? "Maaş Ödemesi Doldur"
-        : "Maaş Gideri Oluştur";
+      button.textContent = SALARY_MODE_BUTTON_TEXT[getSalaryMode()];
     }
   });
 

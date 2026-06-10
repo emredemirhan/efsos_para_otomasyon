@@ -110,7 +110,7 @@ Panel iki akışta çalışır; veri her iki akış için aynı `localStorage` m
 
 - **Gider akışı** (`flow: "expense"`): Yeni gider formu sayfasında (`/fis-faturalar/yeni`) sadece `Ana Gideri Doldur` görünür.
 - **Ödeme akışı** (`flow: "payment"`): Tedarikçiler listesi (`/tedarikciler`), tedarikçi detayı (`/tedarikciler/{id}`) ve gider/fiş detayı (`/fis-faturalar/{id}`) sayfalarında `Ödemeyi Başlat` görünür.
-- **Maaş akışı** (`flow: "salary"`): Çalışanlar listesi (`/calisanlar`), çalışan detayı ve yeni maaş/prim formunda `Maaş Gideri Oluştur`; maaş detay sayfasında (`/maaslar/{id}`) `Maaş Ödemesi Doldur` görünür.
+- **Maaş akışı** (`flow: "salary"`): Çalışanlar listesi (`/calisanlar`), çalışan detayı, yeni maaş/prim formu ve maaş detay sayfasında üç sekmeli çalışır: `Gider`, `Ana+BES`, `Kalan`.
 - Diğer sayfalarda popup gizlenir; veri korunur.
 
 Akış ve sayfa tespiti `src/parasut/pageDetection.js` (`flow`, `paymentStage`, `salaryStage`) ile yapılır; panel orkestrasyonu `src/panel/controller.js`, aksiyon görünürlüğü ise `src/panel/panelFlow.js` tarafından yönetilir.
@@ -126,10 +126,11 @@ Akış ve sayfa tespiti `src/parasut/pageDetection.js` (`flow`, `paymentStage`, 
 
 Maaş akışı da son kaydı kullanıcıya bırakır:
 
-- `Maaş Gideri Oluştur` çalışanı arar/açar, `Diğer > Yeni Maaş / Prim Oluştur` ile maaş formuna gider ve kayıt ismi, hak ediş tarihi, toplam tutar, ödeneceği tarih ve gider kategorisini doldurur.
+- `Gider` sekmesinde `Maaş Gideri Oluştur` çalışanı arar/açar, `Diğer > Yeni Maaş / Prim Oluştur` ile maaş formuna gider ve kayıt ismi, hak ediş tarihi, toplam tutar, ödeneceği tarih ve gider kategorisini doldurur.
 - Gider kategorisi Excel'den alınmaz; her zaman `maaş` olarak seçilir.
 - Otomasyon Paraşüt içindeki `Kaydet` butonuna basmaz.
-- Maaş kaydı Paraşüt'te manuel kaydedildikten sonra açılan maaş detay sayfasında `Maaş Ödemesi Doldur` seçili ödeme bloğunu sidebar'a yazar.
+- `Ana+BES` sekmesi çalışanı arar/açar, çalışanın detay sayfasındaki maaş satırını `Kayıt İsmi` ile bulur, maaş detay sayfasına gider ve sadece `Ana Maaş` ile `BES` ödeme bloklarını doldurur.
+- `Kalan` sekmesi aynı şekilde maaş kaydını `Kayıt İsmi` ile bulur ve sadece `Kalan Maaş` ödeme bloğunu doldurur.
 - Maaş ödeme akışında da son `ÖDEME EKLE` butonuna kullanıcı manuel basar; form kapanmadan sonraki ödeme başlatılmaz.
 
 ## Veri Formatı

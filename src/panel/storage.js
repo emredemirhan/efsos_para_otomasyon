@@ -2,6 +2,7 @@ import {
   STORAGE_INDEX_KEY,
   STORAGE_MIN_KEY,
   STORAGE_POS_KEY,
+  STORAGE_SALARY_MODE_KEY,
 } from "../config/constants.js";
 
 export function getSavedPanelPosition() {
@@ -57,6 +58,20 @@ export function setSelectedIndex(index) {
 
 export function clearSelectionState() {
   localStorage.removeItem(STORAGE_INDEX_KEY);
+}
+
+export function getSalaryMode() {
+  const value = localStorage.getItem(STORAGE_SALARY_MODE_KEY);
+
+  return ["expense", "main-bes", "remaining"].includes(value) ? value : "expense";
+}
+
+export function setSalaryMode(mode) {
+  const safeMode = ["expense", "main-bes", "remaining"].includes(mode)
+    ? mode
+    : "expense";
+
+  localStorage.setItem(STORAGE_SALARY_MODE_KEY, safeMode);
 }
 
 export function isPanelMinimized() {
