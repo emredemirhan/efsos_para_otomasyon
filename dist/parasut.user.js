@@ -1975,7 +1975,10 @@
       throw new Error(`Maa\u015F gider kayd\u0131 bulunamad\u0131: ${salaryTitle}`);
     }
     clickLink2(link);
-    await waitFor(() => getSalaryStage() === "salary-detail", 12e3);
+    await waitFor(
+      () => getSalaryStage() === "salary-detail" || Boolean(findSalaryPaymentOpenerButton()),
+      12e3
+    );
     await sleep(500);
   }
   function findVisibleActionContaining(text, options = {}) {

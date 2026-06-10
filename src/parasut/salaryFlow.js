@@ -307,7 +307,10 @@ async function openSalaryItem(salaryTitle) {
   }
 
   clickLink(link);
-  await waitFor(() => getSalaryStage() === "salary-detail", 12000);
+  await waitFor(
+    () => getSalaryStage() === "salary-detail" || Boolean(findSalaryPaymentOpenerButton()),
+    12000,
+  );
   await sleep(500);
 }
 
