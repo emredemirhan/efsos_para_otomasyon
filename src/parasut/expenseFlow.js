@@ -1,7 +1,11 @@
 import { formatAmountTR, formatDateTR } from "../core/format.js";
 import { $, $$, getActiveAppDocument, sleep, waitFor } from "./dom.js";
 import { selectCategory, selectTag } from "./dropdowns.js";
-import { setOptionalField, setRequiredField } from "./fields.js";
+import {
+  findInputByLabels,
+  setOptionalField,
+  setRequiredField,
+} from "./fields.js";
 import { findCalendarByLabels, setDateFieldByLabels } from "./datepicker.js";
 import { isExpenseFormPage } from "./pageDetection.js";
 import { fillSupplier } from "./supplier.js";
@@ -15,6 +19,12 @@ const ISSUE_DATE_LABELS = [
 ];
 
 const DUE_DATE_LABELS = ["ÖDENECEĞİ TARİH", "ÖDEME TARİHİ", "VADE TARİHİ"];
+const RECORD_NAME_LABELS = [
+  "KAYIT İSMİ",
+  "FİŞ/FATURA ADI",
+  "FATURA ADI",
+  "AÇIKLAMA",
+];
 
 function findUnpaidRadio(root) {
   const direct = $("input[name='paymentStatus'][value='unpaid']", root);
@@ -104,13 +114,11 @@ export async function fillExpense(row) {
   if (!row.supplier) throw new Error("KİŞİ / tedarikçi boş.");
   if (!row.brand) throw new Error("MARKA / gider kategorisi boş.");
 
+  await waitFor(() => findInputByLabels(RECORD_NAME_LABELS), 10000);
+
   const title = row.title || `${row.brand} gider`;
 
-  setRequiredField(
-    ["KAYIT İSMİ", "FİŞ/FATURA ADI", "FATURA ADI", "AÇIKLAMA"],
-    title,
-    "Kayıt ismi",
-  );
+  setRequiredField(RECORD_NAME_LABELS, title, "Kayıt ismi");
   await fillSupplier(row.supplier);
 
   await setIssueDate(row.issueDate);

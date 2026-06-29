@@ -106,14 +106,20 @@ dist/
 
 ## Flow Ayrımı
 
-Panel iki akışta çalışır; veri her iki akış için aynı `localStorage` metnini kullanır:
+Panel üç akışta çalışır; veri tüm akışlar için aynı `localStorage` metnini kullanır:
 
-- **Gider akışı** (`flow: "expense"`): Yeni gider formu sayfasında (`/fis-faturalar/yeni`) sadece `Ana Gideri Doldur` görünür.
+- Panelin üstündeki `Gider / Ödeme / Maaş` seçimi aktif akışı belirler ve `localStorage` içinde korunur.
+- İlk kullanımda açık olan ilgili Paraşüt sayfası başlangıç akışını belirler. Bundan sonraki sayfa geçişleri seçimi değiştirmez.
+- Örneğin `Gider` seçiliyken kayıt sonrası fiş/fatura detayına geçilse bile gider paneli, kayıt seçimi ve `Ana Gideri Doldur` butonu görünür kalır; ödeme araçları gizli kalır.
+- Detay sayfasında sonraki kayıt seçilip `Ana Gideri Doldur` denirse otomasyon yeni gider formunu açar ve seçilen kaydı doldurarak akışı sürdürür.
+- URL ve sayfa içeriği yalnızca seçilen akışın eyleminin o sayfada kullanılıp kullanılamayacağını belirler.
+
+- **Gider akışı** (`flow: "expense"`): Desteklenen Paraşüt sayfalarında gider paneli ve `Ana Gideri Doldur` görünür; gerekirse otomatik olarak yeni gider formuna (`/fis-faturalar/yeni`) geçer.
 - **Ödeme akışı** (`flow: "payment"`): Tedarikçiler listesi (`/tedarikciler`), tedarikçi detayı (`/tedarikciler/{id}`) ve gider/fiş detayı (`/fis-faturalar/{id}`) sayfalarında `Ödemeyi Başlat` görünür.
 - **Maaş akışı** (`flow: "salary"`): Çalışanlar listesi (`/calisanlar`), çalışan detayı, yeni maaş/prim formu ve maaş detay sayfasında üç sekmeli çalışır: `Gider`, `Ana+BES`, `Kalan`.
 - Diğer sayfalarda popup gizlenir; veri korunur.
 
-Akış ve sayfa tespiti `src/parasut/pageDetection.js` (`flow`, `paymentStage`, `salaryStage`) ile yapılır; panel orkestrasyonu `src/panel/controller.js`, aksiyon görünürlüğü ise `src/panel/panelFlow.js` tarafından yönetilir.
+Sayfa tespiti `src/parasut/pageDetection.js` (`flow`, `paymentStage`, `salaryStage`) ile yapılır; kalıcı aktif akış `src/panel/storage.js` içinde tutulur. Panel orkestrasyonu `src/panel/controller.js`, akış seçimi ve aksiyon görünürlüğü ise `src/panel/panelFlow.js` tarafından yönetilir.
 
 `Ödemeyi Başlat` tek satır için: tedarikçiyi arar/açar, gider kalemini ada göre eşleştirip açar, sidebar'daki ilk `Ödeme Ekle` butonuna basarak ödeme formunu açar ve tarih/hesap/meblağ/açıklama alanlarını doldurur.
 

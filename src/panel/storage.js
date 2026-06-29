@@ -1,9 +1,58 @@
 import {
+  STORAGE_ACTIVE_FLOW_KEY,
   STORAGE_INDEX_KEY,
   STORAGE_MIN_KEY,
+  STORAGE_PENDING_EXPENSE_KEY,
   STORAGE_POS_KEY,
   STORAGE_SALARY_MODE_KEY,
 } from "../config/constants.js";
+
+const ACTIVE_FLOWS = ["expense", "payment", "salary"];
+const PENDING_EXPENSE_MAX_AGE_MS = 5 * 60 * 1000;
+
+export function getActiveFlow(fallback = "idle") {
+  const savedFlow = localStorage.getItem(STORAGE_ACTIVE_FLOW_KEY);
+
+  if (ACTIVE_FLOWS.includes(savedFlow)) return savedFlow;
+  if (!ACTIVE_FLOWS.includes(fallback)) return "idle";
+
+  setActiveFlow(fallback);
+  return fallback;
+}
+
+export function setActiveFlow(flow) {
+  if (!ACTIVE_FLOWS.includes(flow)) return;
+
+  localStorage.setItem(STORAGE_ACTIVE_FLOW_KEY, flow);
+}
+
+export function getPendingExpenseFill() {
+  try {
+    const pending = JSON.parse(
+      localStorage.getItem(STORAGE_PENDING_EXPENSE_KEY) || "null",
+    );
+    const isValidIndex = Number.isInteger(pending?.index) && pending.index >= 0;
+    const isFresh =
+      Date.now() - Number(pending?.createdAt || 0) <
+      PENDING_EXPENSE_MAX_AGE_MS;
+
+    if (isValidIndex && isFresh) return pending;
+  } catch {}
+
+  clearPendingExpenseFill();
+  return null;
+}
+
+export function setPendingExpenseFill(index) {
+  localStorage.setItem(
+    STORAGE_PENDING_EXPENSE_KEY,
+    JSON.stringify({ index, createdAt: Date.now() }),
+  );
+}
+
+export function clearPendingExpenseFill() {
+  localStorage.removeItem(STORAGE_PENDING_EXPENSE_KEY);
+}
 
 export function getSavedPanelPosition() {
   try {

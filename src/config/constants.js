@@ -4,3 +4,5 @@ export const STORAGE_INDEX_KEY = "ajans-gider-selected-index-v1";
 export const STORAGE_POS_KEY = "ajans-gider-panel-pos-v1";
 export const STORAGE_MIN_KEY = "ajans-gider-panel-minimized-v1";
 export const STORAGE_SALARY_MODE_KEY = "ajans-gider-salary-mode-v1";
+export const STORAGE_ACTIVE_FLOW_KEY = "ajans-gider-active-flow-v1";
+export const STORAGE_PENDING_EXPENSE_KEY = "ajans-gider-pending-expense-v1";

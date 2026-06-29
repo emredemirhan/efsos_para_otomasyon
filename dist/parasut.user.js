@@ -19,6 +19,8 @@
   var STORAGE_POS_KEY = "ajans-gider-panel-pos-v1";
   var STORAGE_MIN_KEY = "ajans-gider-panel-minimized-v1";
   var STORAGE_SALARY_MODE_KEY = "ajans-gider-salary-mode-v1";
+  var STORAGE_ACTIVE_FLOW_KEY = "ajans-gider-active-flow-v1";
+  var STORAGE_PENDING_EXPENSE_KEY = "ajans-gider-pending-expense-v1";
 
   // src/core/format.js
   function parseAmount(value) {
@@ -1265,6 +1267,12 @@
     "TAR\u0130H"
   ];
   var DUE_DATE_LABELS = ["\xD6DENECE\u011E\u0130 TAR\u0130H", "\xD6DEME TAR\u0130H\u0130", "VADE TAR\u0130H\u0130"];
+  var RECORD_NAME_LABELS = [
+    "KAYIT \u0130SM\u0130",
+    "F\u0130\u015E/FATURA ADI",
+    "FATURA ADI",
+    "A\xC7IKLAMA"
+  ];
   function findUnpaidRadio(root) {
     const direct = $("input[name='paymentStatus'][value='unpaid']", root);
     if (direct) return direct;
@@ -1333,12 +1341,9 @@
     if (!row.amount) throw new Error("Toplam tutar bo\u015F.");
     if (!row.supplier) throw new Error("K\u0130\u015E\u0130 / tedarik\xE7i bo\u015F.");
     if (!row.brand) throw new Error("MARKA / gider kategorisi bo\u015F.");
+    await waitFor(() => findInputByLabels(RECORD_NAME_LABELS), 1e4);
     const title = row.title || `${row.brand} gider`;
-    setRequiredField(
-      ["KAYIT \u0130SM\u0130", "F\u0130\u015E/FATURA ADI", "FATURA ADI", "A\xC7IKLAMA"],
-      title,
-      "Kay\u0131t ismi"
-    );
+    setRequiredField(RECORD_NAME_LABELS, title, "Kay\u0131t ismi");
     await fillSupplier(row.supplier);
     await setIssueDate(row.issueDate);
     setRequiredField(
@@ -1353,6 +1358,65 @@
     if (row.tag) {
       await selectTag(row.tag);
     }
+  }
+
+  // src/parasut/expenseNavigation.js
+  function buildNewExpensePath(pathname) {
+    const isSupportedPage = /\/(?:fis-faturalar|tedarikciler|calisanlar|maaslar|salaries)(?:\/|$)/.test(
+      pathname
+    );
+    if (!isSupportedPage) return "";
+    const companyPrefix = pathname.match(/^\/\d+(?=\/|$)/)?.[0] || "";
+    return `${companyPrefix}/fis-faturalar/yeni`;
+  }
+  function getCandidateDocuments2() {
+    const roots = [getActiveAppDocument(), document];
+    try {
+      if (window.top?.document) roots.push(window.top.document);
+    } catch {
+    }
+    return roots.filter((root, index) => root && roots.indexOf(root) === index);
+  }
+  function findNewExpenseLink() {
+    for (const root of getCandidateDocuments2()) {
+      const link = $$(`a[href*="/fis-faturalar/yeni"]`, root).find(
+        (anchor) => /\/fis-faturalar\/yeni(?:\/hizli)?(?:[?#]|$)/.test(
+          anchor.getAttribute("href") || ""
+        )
+      );
+      if (link) return link;
+    }
+    return null;
+  }
+  function clickAppLink(link) {
+    const view = link.ownerDocument?.defaultView || window;
+    const jq = view.Ember && view.Ember.$ || view.jQuery || view.$;
+    if (jq) {
+      try {
+        jq(link).trigger("click");
+        return;
+      } catch (err) {
+        console.warn("[AJANS] Yeni gider linki jQuery ile a\xE7\u0131lamad\u0131:", err);
+      }
+    }
+    link.click();
+  }
+  function navigateDirectlyToNewExpense() {
+    const root = getActiveAppDocument();
+    const view = root.defaultView || window;
+    const targetPath = buildNewExpensePath(getAppPathname());
+    if (!targetPath) {
+      throw new Error("Yeni gider formu adresi olu\u015Fturulamad\u0131.");
+    }
+    view.location.assign(targetPath);
+  }
+  async function goToNewExpenseForm() {
+    if (isExpenseFormPage()) return;
+    const link = findNewExpenseLink();
+    if (link) clickAppLink(link);
+    else navigateDirectlyToNewExpense();
+    await waitFor(() => isExpenseFormPage(), 12e3);
+    await sleep(500);
   }
 
   // src/parasut/paymentFlow.js
@@ -1754,7 +1818,7 @@
   }
 
   // src/parasut/salaryFlow.js
-  var RECORD_NAME_LABELS = ["KAYIT \u0130SM\u0130", "KAYIT ADI", "A\xC7IKLAMA"];
+  var RECORD_NAME_LABELS2 = ["KAYIT \u0130SM\u0130", "KAYIT ADI", "A\xC7IKLAMA"];
   var ENTITLEMENT_DATE_LABELS = ["HAK ED\u0130\u015E TAR\u0130H\u0130", "HAKED\u0130\u015E TAR\u0130H\u0130"];
   var DUE_DATE_LABELS2 = ["\xD6DENECE\u011E\u0130 TAR\u0130H", "\xD6DEME TAR\u0130H\u0130", "VADE TAR\u0130H\u0130"];
   var AMOUNT_LABELS = ["TOPLAM TUTAR", "GENEL TOPLAM", "TUTAR"];
@@ -2146,7 +2210,7 @@
   }
   async function waitForSalaryFormReady() {
     return waitFor(
-      () => findInputByLabels(RECORD_NAME_LABELS, getActiveAppDocument()),
+      () => findInputByLabels(RECORD_NAME_LABELS2, getActiveAppDocument()),
       15e3
     ).catch(() => null);
   }
@@ -2168,7 +2232,7 @@
     if (!ready) {
       throw new Error("Yeni Maa\u015F / Prim formu y\xFCklenmedi; Kay\u0131t \u0130smi alan\u0131 bulunamad\u0131.");
     }
-    setRequiredField(RECORD_NAME_LABELS, record.title, "Kay\u0131t ismi");
+    setRequiredField(RECORD_NAME_LABELS2, record.title, "Kay\u0131t ismi");
     await setSalaryDate(
       ENTITLEMENT_DATE_LABELS,
       record.entitlementDate,
@@ -2241,6 +2305,41 @@
   }
 
   // src/panel/storage.js
+  var ACTIVE_FLOWS = ["expense", "payment", "salary"];
+  var PENDING_EXPENSE_MAX_AGE_MS = 5 * 60 * 1e3;
+  function getActiveFlow(fallback = "idle") {
+    const savedFlow = localStorage.getItem(STORAGE_ACTIVE_FLOW_KEY);
+    if (ACTIVE_FLOWS.includes(savedFlow)) return savedFlow;
+    if (!ACTIVE_FLOWS.includes(fallback)) return "idle";
+    setActiveFlow(fallback);
+    return fallback;
+  }
+  function setActiveFlow(flow) {
+    if (!ACTIVE_FLOWS.includes(flow)) return;
+    localStorage.setItem(STORAGE_ACTIVE_FLOW_KEY, flow);
+  }
+  function getPendingExpenseFill() {
+    try {
+      const pending = JSON.parse(
+        localStorage.getItem(STORAGE_PENDING_EXPENSE_KEY) || "null"
+      );
+      const isValidIndex = Number.isInteger(pending?.index) && pending.index >= 0;
+      const isFresh = Date.now() - Number(pending?.createdAt || 0) < PENDING_EXPENSE_MAX_AGE_MS;
+      if (isValidIndex && isFresh) return pending;
+    } catch {
+    }
+    clearPendingExpenseFill();
+    return null;
+  }
+  function setPendingExpenseFill(index) {
+    localStorage.setItem(
+      STORAGE_PENDING_EXPENSE_KEY,
+      JSON.stringify({ index, createdAt: Date.now() })
+    );
+  }
+  function clearPendingExpenseFill() {
+    localStorage.removeItem(STORAGE_PENDING_EXPENSE_KEY);
+  }
   function getSavedPanelPosition() {
     try {
       return JSON.parse(localStorage.getItem(STORAGE_POS_KEY) || "null");
@@ -2544,6 +2643,21 @@
         line-height:1.5;
       ">
         <span id="ajans-gider-help-content"></span>
+      </div>
+
+      <div id="ajans-gider-flow-tabs" style="
+        display:grid;
+        grid-template-columns:1fr 1fr 1fr;
+        gap:4px;
+        margin-bottom:10px;
+        padding:3px;
+        background:${SOFT_BG2};
+        border:1px solid ${BORDER2};
+        border-radius:9px;
+      ">
+        ${getFlowTabMarkup("expense", "Gider")}
+        ${getFlowTabMarkup("payment", "\xD6deme")}
+        ${getFlowTabMarkup("salary", "Maa\u015F")}
       </div>
 
       <div id="ajans-gider-salary-tabs" hidden style="
@@ -2861,6 +2975,23 @@
     </div>
   `;
   }
+  function getFlowTabMarkup(flow, label) {
+    return `
+    <button type="button" data-active-flow="${flow}" style="
+      min-width:0;
+      height:30px;
+      padding:0 6px;
+      border:0;
+      border-radius:7px;
+      background:transparent;
+      color:${MUTED2};
+      cursor:pointer;
+      font-size:11px;
+      font-weight:600;
+      font-family:inherit;
+    ">${label}</button>
+  `;
+  }
 
   // src/panel/panelState.js
   var { ACCENT: ACCENT3, ACCENT_DARK: ACCENT_DARK2, MUTED: MUTED3 } = PANEL_COLORS;
@@ -3046,7 +3177,7 @@
     remaining: "Kalan"
   };
   var FLOW_HELP = {
-    expense: "Excel sat\u0131rlar\u0131n\u0131 kopyalay\u0131p a\u015Fa\u011F\u0131ya yap\u0131\u015Ft\u0131r. Sayfa de\u011Fi\u015Fse de veri kal\u0131r.<br><b>S\xFCtunlar:</b> Ki\u015Fi \xB7 Marka \xB7 Tutar \xB7 Kay\u0131t \u0130smi<br>Se\xE7ili kayd\u0131 <b>Ana Gideri Doldur</b> ile forma yazar; kaydetmeyi sen yapars\u0131n.",
+    expense: "Excel sat\u0131rlar\u0131n\u0131 kopyalay\u0131p a\u015Fa\u011F\u0131ya yap\u0131\u015Ft\u0131r. Sayfa de\u011Fi\u015Fse de veri kal\u0131r.<br><b>S\xFCtunlar:</b> Ki\u015Fi \xB7 Marka \xB7 Tutar \xB7 Kay\u0131t \u0130smi<br>Se\xE7ili kayd\u0131 <b>Ana Gideri Doldur</b> ile yeni gider formuna yazar; detay sayfas\u0131ndaysan formu otomatik a\xE7ar. Kaydetmeyi sen yapars\u0131n.",
     payment: "Excel sat\u0131rlar\u0131n\u0131 kopyalay\u0131p a\u015Fa\u011F\u0131ya yap\u0131\u015Ft\u0131r. Sayfa de\u011Fi\u015Fse de veri kal\u0131r.<br><b>\xD6deme s\xFCtunlar\u0131:</b> \xD6deme Tutar\u0131 \xB7 \xD6deme Tarihi \xB7 \xD6deme Hesab\u0131<br>Birden fazla \xF6deme i\xE7in tutar/tarih/hesab\u0131 <b>/</b> ile ay\u0131r. <b>\xD6demeyi Ba\u015Flat</b> tedarik\xE7iyi bulup \xF6deme formunu doldurur; son <b>\xD6DEME EKLE</b>'ye sen basars\u0131n.",
     salary: "Excel sat\u0131rlar\u0131n\u0131 kopyalay\u0131p a\u015Fa\u011F\u0131ya yap\u0131\u015Ft\u0131r. Sayfa de\u011Fi\u015Fse de veri kal\u0131r.<br><b>Gider:</b> \xC7al\u0131\u015Fan \xB7 Kay\u0131t \u0130smi \xB7 Hak Edi\u015F Tarihi \xB7 Toplam Tutar \xB7 \xD6denece\u011Fi Tarih<br><b>Ana+BES / Kalan:</b> Kay\u0131t \u0130smi ile maa\u015F kayd\u0131 bulunur, ilgili \xF6deme blo\u011Fu detay sayfas\u0131na yaz\u0131l\u0131r; son <b>\xD6DEME EKLE</b>'ye sen basars\u0131n.",
     idle: "Excel sat\u0131rlar\u0131n\u0131 kopyalay\u0131p a\u015Fa\u011F\u0131ya yap\u0131\u015Ft\u0131r. Sayfa de\u011Fi\u015Fse de veri kal\u0131r.<br>Gider formu, tedarik\xE7i sayfas\u0131 veya \xE7al\u0131\u015Fanlar sayfas\u0131na gidince ilgili ara\xE7 \xE7\u0131kar."
@@ -3069,6 +3200,17 @@
       button.setAttribute("aria-pressed", isActive ? "true" : "false");
     });
   }
+  function updateFlowTabs(flow) {
+    const tabs = $("#ajans-gider-flow-tabs");
+    if (!tabs) return;
+    tabs.querySelectorAll("[data-active-flow]").forEach((button) => {
+      const isActive = button.getAttribute("data-active-flow") === flow;
+      button.style.background = isActive ? "#ffffff" : "transparent";
+      button.style.color = isActive ? PANEL_COLORS.TEXT : PANEL_COLORS.MUTED;
+      button.style.boxShadow = isActive ? "0 1px 2px rgba(15,23,42,.08)" : "none";
+      button.setAttribute("aria-pressed", isActive ? "true" : "false");
+    });
+  }
   function updateFlowVisibility(flow, options = {}) {
     const expenseActions = $("#ajans-gider-expense-actions");
     const paymentActions = $("#ajans-gider-payment-actions");
@@ -3076,14 +3218,17 @@
     const titleText = $("#ajans-gider-title-text");
     const helpContent = $("#ajans-gider-help-content");
     const salaryMode = options.salaryMode || "expense";
+    const canRunExpense = options.canRunExpense ?? flow === "expense";
+    const canRunPayment = options.canRunPayment ?? flow === "payment";
+    const canRunSalary = options.canRunSalary ?? flow === "salary";
     if (expenseActions) {
-      expenseActions.style.display = flow === "expense" ? "block" : "none";
+      expenseActions.style.display = flow === "expense" && canRunExpense ? "block" : "none";
     }
     if (paymentActions) {
-      paymentActions.style.display = flow === "payment" ? "block" : "none";
+      paymentActions.style.display = flow === "payment" && canRunPayment ? "block" : "none";
     }
     if (salaryActions) {
-      salaryActions.style.display = flow === "salary" ? "block" : "none";
+      salaryActions.style.display = flow === "salary" && canRunSalary ? "block" : "none";
     }
     if (titleText) {
       const title = FLOW_TITLES[flow] || FLOW_TITLES.idle;
@@ -3092,6 +3237,7 @@
     if (helpContent) {
       helpContent.innerHTML = FLOW_HELP[flow] || FLOW_HELP.idle;
     }
+    updateFlowTabs(flow);
     updateSalaryTabs(flow, salaryMode);
   }
 
@@ -3300,8 +3446,8 @@
     if (!textarea) return [];
     return parseTable(textarea.value);
   }
-  function getCurrentFlow() {
-    return getPageDetectionSnapshot().flow;
+  function getCurrentFlow(snapshot = getPageDetectionSnapshot()) {
+    return getActiveFlow(snapshot.flow);
   }
   function isBusy() {
     return isFilling || isRunningPayment || isRunningSalary;
@@ -3316,6 +3462,15 @@
     if (salaryPaymentAwaitingManualSave && !isSalaryPaymentFormOpen()) {
       salaryPaymentAwaitingManualSave = false;
     }
+  }
+  function getFlowUnavailableMessage(flow, snapshot) {
+    if (flow === "payment" && !snapshot.paymentStage) {
+      return "\xD6deme ak\u0131\u015F\u0131 aktif. Tedarik\xE7iler veya fi\u015F/fatura detay sayfas\u0131na ge\xE7ti\u011Finde \xF6deme arac\u0131n\u0131 kullanabilirsin.";
+    }
+    if (flow === "salary" && !snapshot.salaryStage) {
+      return "Maa\u015F ak\u0131\u015F\u0131 aktif. \xC7al\u0131\u015Fanlar veya maa\u015F sayfas\u0131na ge\xE7ti\u011Finde maa\u015F arac\u0131n\u0131 kullanabilirsin.";
+    }
+    return "";
   }
   function getActiveRecords(flow = getCurrentFlow()) {
     const rows = getRowsFromTextarea();
@@ -3342,14 +3497,63 @@
     syncPanelRows();
     return true;
   }
+  async function runExpenseFill(button) {
+    if (isFilling) return;
+    isFilling = true;
+    setFillButtonLoading(button, true);
+    try {
+      const rows = getRowsFromTextarea();
+      if (!rows.length) throw new Error("Sat\u0131r bulunamad\u0131.");
+      const index = getSelectedIndex(rows.length);
+      const row = rows[index];
+      if (!isExpenseFormPage()) {
+        setPendingExpenseFill(index);
+        setStatus("Yeni gider formu a\xE7\u0131l\u0131yor...");
+        await goToNewExpenseForm();
+      }
+      clearPendingExpenseFill();
+      setStatus(`${index + 1}. kay\u0131t dolduruluyor...`);
+      await fillExpense(row);
+      const advanced = advanceSelectionAfterSuccessfulFill(index, rows.length);
+      const nextMessage = advanced ? ` ${index + 2}. kayda ge\xE7ildi.` : " Son kay\u0131ttas\u0131n.";
+      setStatus(
+        `DOLDURMA BA\u015EARILI. ${index + 1}. kay\u0131t forma dolduruldu.${nextMessage} Kaydetme i\u015Flemini manuel yap.`,
+        "success"
+      );
+    } catch (err) {
+      clearPendingExpenseFill();
+      console.error("[AJANS] Doldurma hatas\u0131:", err);
+      setStatus(err.message || String(err), true);
+    } finally {
+      isFilling = false;
+      setFillButtonLoading(button, false);
+    }
+  }
+  function resumePendingExpenseFill() {
+    const pending = getPendingExpenseFill();
+    const snapshot = getPageDetectionSnapshot();
+    if (!pending || getCurrentFlow(snapshot) !== "expense" || !snapshot.isExpense) {
+      return;
+    }
+    setSelectedIndex(pending.index);
+    syncPanelRows();
+    const button = $("#ajans-gider-fill");
+    if (button) runExpenseFill(button);
+  }
   function syncPanelRows() {
     clearPaymentWaitIfFormClosed();
     const textarea = $("#ajans-gider-textarea");
     const select = $("#ajans-gider-row-select");
     if (!textarea) return;
-    const flow = getCurrentFlow();
+    const snapshot = getPageDetectionSnapshot();
+    const flow = getCurrentFlow(snapshot);
     const salaryMode = getSalaryMode();
-    updateFlowVisibility(flow, { salaryMode });
+    updateFlowVisibility(flow, {
+      salaryMode,
+      canRunExpense: true,
+      canRunPayment: Boolean(snapshot.paymentStage),
+      canRunSalary: Boolean(snapshot.salaryStage)
+    });
     applyHelpState(isHelpOpen);
     let records = {
       kind: getRecordKind(flow),
@@ -3391,8 +3595,13 @@
     if (!items.length) {
       renderRecordCard(null, kind, 0, 0);
       if (isBusy()) return;
+      const unavailableMessage2 = getFlowUnavailableMessage(flow, snapshot);
+      if (unavailableMessage2) {
+        setStatus(unavailableMessage2);
+        return;
+      }
       if (flow === "expense") {
-        setStatus("Gider formundas\u0131n. Veri yap\u0131\u015Ft\u0131r\u0131nca doldurulur.");
+        setStatus("Gider ak\u0131\u015F\u0131 aktif. Veri yap\u0131\u015Ft\u0131r\u0131nca kay\u0131tlar\u0131 s\u0131rayla doldurabilirsin.");
       } else if (flow === "payment") {
         const hasText = String(textarea.value || "").trim().length > 0;
         setStatus(
@@ -3418,6 +3627,11 @@
     if (select) select.value = String(selectedIndex);
     renderRecordCard(items[selectedIndex], kind, selectedIndex, items.length);
     if (isBusy()) return;
+    const unavailableMessage = getFlowUnavailableMessage(flow, snapshot);
+    if (unavailableMessage) {
+      setStatus(unavailableMessage);
+      return;
+    }
     if (flow === "expense") {
       setStatus("");
     } else if (flow === "payment") {
@@ -3456,6 +3670,7 @@
     const minimizeButton = $("#ajans-gider-minimize");
     const helpButton = $("#ajans-gider-help-toggle");
     const editDataButton = $("#ajans-gider-edit-data");
+    const flowTabs = $("#ajans-gider-flow-tabs");
     const salaryTabs = $("#ajans-gider-salary-tabs");
     textarea.value = localStorage.getItem(STORAGE_TEXT_KEY) || "";
     installDebugHelpers();
@@ -3516,6 +3731,18 @@
         if (ta) ta.focus();
       });
     }
+    if (flowTabs) {
+      flowTabs.querySelectorAll("[data-active-flow]").forEach((button) => {
+        button.addEventListener("click", () => {
+          const flow = button.getAttribute("data-active-flow");
+          if (isBusy() || flow === getCurrentFlow()) return;
+          setActiveFlow(flow);
+          if (flow !== "expense") clearPendingExpenseFill();
+          setSelectedIndex(0);
+          syncPanelRows();
+        });
+      });
+    }
     if (salaryTabs) {
       salaryTabs.querySelectorAll("[data-salary-mode]").forEach((button) => {
         button.addEventListener("click", () => {
@@ -3545,35 +3772,13 @@
       textarea.value = "";
       localStorage.removeItem(STORAGE_TEXT_KEY);
       clearSelectionState();
+      clearPendingExpenseFill();
       isDataEditorOpen = true;
       syncPanelRows();
       setStatus("Veri temizlendi.");
     });
-    $("#ajans-gider-fill").addEventListener("click", async (event) => {
-      const button = event.currentTarget;
-      if (isFilling) return;
-      isFilling = true;
-      setFillButtonLoading(button, true);
-      try {
-        const rows = getRowsFromTextarea();
-        if (!rows.length) throw new Error("Sat\u0131r bulunamad\u0131.");
-        const index = getSelectedIndex(rows.length);
-        const row = rows[index];
-        setStatus(`${index + 1}. kay\u0131t dolduruluyor...`);
-        await fillExpense(row);
-        const advanced = advanceSelectionAfterSuccessfulFill(index, rows.length);
-        const nextMessage = advanced ? ` ${index + 2}. kayda ge\xE7ildi.` : " Son kay\u0131ttas\u0131n.";
-        setStatus(
-          `DOLDURMA BA\u015EARILI. ${index + 1}. kay\u0131t forma dolduruldu.${nextMessage} Kaydetme i\u015Flemini manuel yap.`,
-          "success"
-        );
-      } catch (err) {
-        console.error("[AJANS] Doldurma hatas\u0131:", err);
-        setStatus(err.message || String(err), true);
-      } finally {
-        isFilling = false;
-        setFillButtonLoading(button, false);
-      }
+    $("#ajans-gider-fill").addEventListener("click", (event) => {
+      runExpenseFill(event.currentTarget);
     });
     $("#ajans-gider-pay").addEventListener("click", async (event) => {
       const button = event.currentTarget;
@@ -3668,6 +3873,7 @@
       savePanelPosition(panel);
     });
     syncPanelRows();
+    window.setTimeout(resumePendingExpenseFill, 300);
   }
   function injectPanel() {
     if (!document.body) return;
@@ -3694,9 +3900,11 @@
   }
   function ensurePanelForCurrentPage(reason = "refresh") {
     const snapshot = getPageDetectionSnapshot();
-    const flow = snapshot.flow;
+    const detectedFlow = snapshot.flow;
+    const flow = getCurrentFlow(snapshot);
     const decisionLogKey = [
       reason,
+      detectedFlow,
       flow,
       snapshot.pathname,
       snapshot.activeDocumentPathname,
@@ -3705,12 +3913,13 @@
     if (decisionLogKey !== lastDecisionLogKey) {
       appendDebugLog("panel-decision", {
         reason,
+        detectedFlow,
         flow,
         snapshot
       });
       lastDecisionLogKey = decisionLogKey;
     }
-    if (flow === "idle") {
+    if (detectedFlow === "idle") {
       if (isBusy()) return flow;
       removePanel("idle-flow", snapshot);
       return flow;

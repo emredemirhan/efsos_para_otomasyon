@@ -99,6 +99,21 @@ function getPanelMarkup() {
         <span id="ajans-gider-help-content"></span>
       </div>
 
+      <div id="ajans-gider-flow-tabs" style="
+        display:grid;
+        grid-template-columns:1fr 1fr 1fr;
+        gap:4px;
+        margin-bottom:10px;
+        padding:3px;
+        background:${SOFT_BG};
+        border:1px solid ${BORDER};
+        border-radius:9px;
+      ">
+        ${getFlowTabMarkup("expense", "Gider")}
+        ${getFlowTabMarkup("payment", "Ödeme")}
+        ${getFlowTabMarkup("salary", "Maaş")}
+      </div>
+
       <div id="ajans-gider-salary-tabs" hidden style="
         display:grid;
         grid-template-columns:1fr 1fr 1fr;
@@ -412,5 +427,23 @@ function getPanelMarkup() {
         </div>
       </div>
     </div>
+  `;
+}
+
+function getFlowTabMarkup(flow, label) {
+  return `
+    <button type="button" data-active-flow="${flow}" style="
+      min-width:0;
+      height:30px;
+      padding:0 6px;
+      border:0;
+      border-radius:7px;
+      background:transparent;
+      color:${MUTED};
+      cursor:pointer;
+      font-size:11px;
+      font-weight:600;
+      font-family:inherit;
+    ">${label}</button>
   `;
 }

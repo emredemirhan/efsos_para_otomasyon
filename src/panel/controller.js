@@ -7,6 +7,7 @@ import {
   parseTable,
 } from "../core/tableParser.js";
 import { fillExpense } from "../parasut/expenseFlow.js";
+import { goToNewExpenseForm } from "../parasut/expenseNavigation.js";
 import { runPayment } from "../parasut/paymentFlow.js";
 import {
   isSalaryPaymentFormOpen,
@@ -15,7 +16,10 @@ import {
 } from "../parasut/salaryFlow.js";
 import { $, getActiveAppDocument } from "../parasut/dom.js";
 import { removeDuplicatePanels } from "../parasut/frame.js";
-import { getPageDetectionSnapshot } from "../parasut/pageDetection.js";
+import {
+  getPageDetectionSnapshot,
+  isExpenseFormPage,
+} from "../parasut/pageDetection.js";
 import { makePanelDraggable } from "./drag.js";
 import {
   applyMinimizedState,
@@ -38,10 +42,15 @@ import {
   setDataSummary,
 } from "./panelRecordCard.js";
 import {
+  clearPendingExpenseFill,
   clearSelectionState,
+  getActiveFlow,
+  getPendingExpenseFill,
   getSalaryMode,
   getSelectedIndex,
   savePanelPosition,
+  setActiveFlow,
+  setPendingExpenseFill,
   setPanelMinimized,
   setSalaryMode,
   setSelectedIndex,
@@ -74,8 +83,8 @@ function getRowsFromTextarea() {
   return parseTable(textarea.value);
 }
 
-function getCurrentFlow() {
-  return getPageDetectionSnapshot().flow;
+function getCurrentFlow(snapshot = getPageDetectionSnapshot()) {
+  return getActiveFlow(snapshot.flow);
 }
 
 function isBusy() {
@@ -94,6 +103,18 @@ function clearPaymentWaitIfFormClosed() {
   if (salaryPaymentAwaitingManualSave && !isSalaryPaymentFormOpen()) {
     salaryPaymentAwaitingManualSave = false;
   }
+}
+
+function getFlowUnavailableMessage(flow, snapshot) {
+  if (flow === "payment" && !snapshot.paymentStage) {
+    return "Ödeme akışı aktif. Tedarikçiler veya fiş/fatura detay sayfasına geçtiğinde ödeme aracını kullanabilirsin.";
+  }
+
+  if (flow === "salary" && !snapshot.salaryStage) {
+    return "Maaş akışı aktif. Çalışanlar veya maaş sayfasına geçtiğinde maaş aracını kullanabilirsin.";
+  }
+
+  return "";
 }
 
 function getActiveRecords(flow = getCurrentFlow()) {
@@ -129,6 +150,62 @@ function advanceSelectionAfterSuccessfulFill(currentIndex, rowsLength) {
   return true;
 }
 
+async function runExpenseFill(button) {
+  if (isFilling) return;
+  isFilling = true;
+  setFillButtonLoading(button, true);
+
+  try {
+    const rows = getRowsFromTextarea();
+    if (!rows.length) throw new Error("Satır bulunamadı.");
+
+    const index = getSelectedIndex(rows.length);
+    const row = rows[index];
+
+    if (!isExpenseFormPage()) {
+      setPendingExpenseFill(index);
+      setStatus("Yeni gider formu açılıyor...");
+      await goToNewExpenseForm();
+    }
+
+    clearPendingExpenseFill();
+    setStatus(`${index + 1}. kayıt dolduruluyor...`);
+    await fillExpense(row);
+
+    const advanced = advanceSelectionAfterSuccessfulFill(index, rows.length);
+    const nextMessage = advanced
+      ? ` ${index + 2}. kayda geçildi.`
+      : " Son kayıttasın.";
+
+    setStatus(
+      `DOLDURMA BAŞARILI. ${index + 1}. kayıt forma dolduruldu.${nextMessage} Kaydetme işlemini manuel yap.`,
+      "success",
+    );
+  } catch (err) {
+    clearPendingExpenseFill();
+    console.error("[AJANS] Doldurma hatası:", err);
+    setStatus(err.message || String(err), true);
+  } finally {
+    isFilling = false;
+    setFillButtonLoading(button, false);
+  }
+}
+
+function resumePendingExpenseFill() {
+  const pending = getPendingExpenseFill();
+  const snapshot = getPageDetectionSnapshot();
+
+  if (!pending || getCurrentFlow(snapshot) !== "expense" || !snapshot.isExpense) {
+    return;
+  }
+
+  setSelectedIndex(pending.index);
+  syncPanelRows();
+
+  const button = $("#ajans-gider-fill");
+  if (button) runExpenseFill(button);
+}
+
 function syncPanelRows() {
   clearPaymentWaitIfFormClosed();
 
@@ -137,9 +214,15 @@ function syncPanelRows() {
 
   if (!textarea) return;
 
-  const flow = getCurrentFlow();
+  const snapshot = getPageDetectionSnapshot();
+  const flow = getCurrentFlow(snapshot);
   const salaryMode = getSalaryMode();
-  updateFlowVisibility(flow, { salaryMode });
+  updateFlowVisibility(flow, {
+    salaryMode,
+    canRunExpense: true,
+    canRunPayment: Boolean(snapshot.paymentStage),
+    canRunSalary: Boolean(snapshot.salaryStage),
+  });
   applyHelpState(isHelpOpen);
 
   let records = {
@@ -198,8 +281,14 @@ function syncPanelRows() {
     renderRecordCard(null, kind, 0, 0);
     if (isBusy()) return;
 
+    const unavailableMessage = getFlowUnavailableMessage(flow, snapshot);
+    if (unavailableMessage) {
+      setStatus(unavailableMessage);
+      return;
+    }
+
     if (flow === "expense") {
-      setStatus("Gider formundasın. Veri yapıştırınca doldurulur.");
+      setStatus("Gider akışı aktif. Veri yapıştırınca kayıtları sırayla doldurabilirsin.");
     } else if (flow === "payment") {
       const hasText = String(textarea.value || "").trim().length > 0;
       setStatus(
@@ -238,6 +327,12 @@ function syncPanelRows() {
   renderRecordCard(items[selectedIndex], kind, selectedIndex, items.length);
 
   if (isBusy()) return;
+
+  const unavailableMessage = getFlowUnavailableMessage(flow, snapshot);
+  if (unavailableMessage) {
+    setStatus(unavailableMessage);
+    return;
+  }
 
   if (flow === "expense") {
     setStatus("");
@@ -285,6 +380,7 @@ function registerPanelEvents(panel) {
   const minimizeButton = $("#ajans-gider-minimize");
   const helpButton = $("#ajans-gider-help-toggle");
   const editDataButton = $("#ajans-gider-edit-data");
+  const flowTabs = $("#ajans-gider-flow-tabs");
   const salaryTabs = $("#ajans-gider-salary-tabs");
 
   textarea.value = localStorage.getItem(STORAGE_TEXT_KEY) || "";
@@ -360,6 +456,20 @@ function registerPanelEvents(panel) {
     });
   }
 
+  if (flowTabs) {
+    flowTabs.querySelectorAll("[data-active-flow]").forEach((button) => {
+      button.addEventListener("click", () => {
+        const flow = button.getAttribute("data-active-flow");
+        if (isBusy() || flow === getCurrentFlow()) return;
+
+        setActiveFlow(flow);
+        if (flow !== "expense") clearPendingExpenseFill();
+        setSelectedIndex(0);
+        syncPanelRows();
+      });
+    });
+  }
+
   if (salaryTabs) {
     salaryTabs.querySelectorAll("[data-salary-mode]").forEach((button) => {
       button.addEventListener("click", () => {
@@ -395,45 +505,14 @@ function registerPanelEvents(panel) {
     textarea.value = "";
     localStorage.removeItem(STORAGE_TEXT_KEY);
     clearSelectionState();
+    clearPendingExpenseFill();
     isDataEditorOpen = true;
     syncPanelRows();
     setStatus("Veri temizlendi.");
   });
 
-  $("#ajans-gider-fill").addEventListener("click", async (event) => {
-    const button = event.currentTarget;
-
-    if (isFilling) return;
-    isFilling = true;
-    setFillButtonLoading(button, true);
-
-    try {
-      const rows = getRowsFromTextarea();
-      if (!rows.length) throw new Error("Satır bulunamadı.");
-
-      const index = getSelectedIndex(rows.length);
-      const row = rows[index];
-
-      setStatus(`${index + 1}. kayıt dolduruluyor...`);
-
-      await fillExpense(row);
-
-      const advanced = advanceSelectionAfterSuccessfulFill(index, rows.length);
-      const nextMessage = advanced
-        ? ` ${index + 2}. kayda geçildi.`
-        : " Son kayıttasın.";
-
-      setStatus(
-        `DOLDURMA BAŞARILI. ${index + 1}. kayıt forma dolduruldu.${nextMessage} Kaydetme işlemini manuel yap.`,
-        "success",
-      );
-    } catch (err) {
-      console.error("[AJANS] Doldurma hatası:", err);
-      setStatus(err.message || String(err), true);
-    } finally {
-      isFilling = false;
-      setFillButtonLoading(button, false);
-    }
+  $("#ajans-gider-fill").addEventListener("click", (event) => {
+    runExpenseFill(event.currentTarget);
   });
 
   $("#ajans-gider-pay").addEventListener("click", async (event) => {
@@ -563,6 +642,7 @@ function registerPanelEvents(panel) {
   });
 
   syncPanelRows();
+  window.setTimeout(resumePendingExpenseFill, 300);
 }
 
 export function injectPanel() {
@@ -599,9 +679,11 @@ export function removePanel(reason = "unknown", snapshot = getPageDetectionSnaps
 
 export function ensurePanelForCurrentPage(reason = "refresh") {
   const snapshot = getPageDetectionSnapshot();
-  const flow = snapshot.flow;
+  const detectedFlow = snapshot.flow;
+  const flow = getCurrentFlow(snapshot);
   const decisionLogKey = [
     reason,
+    detectedFlow,
     flow,
     snapshot.pathname,
     snapshot.activeDocumentPathname,
@@ -611,13 +693,14 @@ export function ensurePanelForCurrentPage(reason = "refresh") {
   if (decisionLogKey !== lastDecisionLogKey) {
     appendDebugLog("panel-decision", {
       reason,
+      detectedFlow,
       flow,
       snapshot,
     });
     lastDecisionLogKey = decisionLogKey;
   }
 
-  if (flow === "idle") {
+  if (detectedFlow === "idle") {
     if (isBusy()) return flow;
     removePanel("idle-flow", snapshot);
     return flow;

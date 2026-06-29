@@ -18,7 +18,7 @@ const FLOW_HELP = {
   expense:
     "Excel satırlarını kopyalayıp aşağıya yapıştır. Sayfa değişse de veri kalır.<br>" +
     "<b>Sütunlar:</b> Kişi · Marka · Tutar · Kayıt İsmi<br>" +
-    "Seçili kaydı <b>Ana Gideri Doldur</b> ile forma yazar; kaydetmeyi sen yaparsın.",
+    "Seçili kaydı <b>Ana Gideri Doldur</b> ile yeni gider formuna yazar; detay sayfasındaysan formu otomatik açar. Kaydetmeyi sen yaparsın.",
   payment:
     "Excel satırlarını kopyalayıp aşağıya yapıştır. Sayfa değişse de veri kalır.<br>" +
     "<b>Ödeme sütunları:</b> Ödeme Tutarı · Ödeme Tarihi · Ödeme Hesabı<br>" +
@@ -55,6 +55,20 @@ function updateSalaryTabs(flow, salaryMode) {
   });
 }
 
+function updateFlowTabs(flow) {
+  const tabs = $("#ajans-gider-flow-tabs");
+  if (!tabs) return;
+
+  tabs.querySelectorAll("[data-active-flow]").forEach((button) => {
+    const isActive = button.getAttribute("data-active-flow") === flow;
+
+    button.style.background = isActive ? "#ffffff" : "transparent";
+    button.style.color = isActive ? PANEL_COLORS.TEXT : PANEL_COLORS.MUTED;
+    button.style.boxShadow = isActive ? "0 1px 2px rgba(15,23,42,.08)" : "none";
+    button.setAttribute("aria-pressed", isActive ? "true" : "false");
+  });
+}
+
 export function updateFlowVisibility(flow, options = {}) {
   const expenseActions = $("#ajans-gider-expense-actions");
   const paymentActions = $("#ajans-gider-payment-actions");
@@ -62,17 +76,23 @@ export function updateFlowVisibility(flow, options = {}) {
   const titleText = $("#ajans-gider-title-text");
   const helpContent = $("#ajans-gider-help-content");
   const salaryMode = options.salaryMode || "expense";
+  const canRunExpense = options.canRunExpense ?? flow === "expense";
+  const canRunPayment = options.canRunPayment ?? flow === "payment";
+  const canRunSalary = options.canRunSalary ?? flow === "salary";
 
   if (expenseActions) {
-    expenseActions.style.display = flow === "expense" ? "block" : "none";
+    expenseActions.style.display =
+      flow === "expense" && canRunExpense ? "block" : "none";
   }
 
   if (paymentActions) {
-    paymentActions.style.display = flow === "payment" ? "block" : "none";
+    paymentActions.style.display =
+      flow === "payment" && canRunPayment ? "block" : "none";
   }
 
   if (salaryActions) {
-    salaryActions.style.display = flow === "salary" ? "block" : "none";
+    salaryActions.style.display =
+      flow === "salary" && canRunSalary ? "block" : "none";
   }
 
   if (titleText) {
@@ -85,5 +105,6 @@ export function updateFlowVisibility(flow, options = {}) {
     helpContent.innerHTML = FLOW_HELP[flow] || FLOW_HELP.idle;
   }
 
+  updateFlowTabs(flow);
   updateSalaryTabs(flow, salaryMode);
 }
