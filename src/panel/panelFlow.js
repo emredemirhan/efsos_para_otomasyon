@@ -9,7 +9,6 @@ const FLOW_TITLES = {
 };
 
 const SALARY_MODE_LABELS = {
-  expense: "Gider",
   "main-bes": "Ana+BES",
   remaining: "Kalan",
 };
@@ -25,7 +24,6 @@ const FLOW_HELP = {
     "Birden fazla ödeme için tutar/tarih/hesabı <b>/</b> ile ayır. <b>Ödemeyi Başlat</b> tedarikçiyi bulup ödeme formunu doldurur; son <b>ÖDEME EKLE</b>'ye sen basarsın.",
   salary:
     "Excel satırlarını kopyalayıp aşağıya yapıştır. Sayfa değişse de veri kalır.<br>" +
-    "<b>Gider:</b> Çalışan · Kayıt İsmi · Hak Ediş Tarihi · Toplam Tutar · Ödeneceği Tarih<br>" +
     "<b>Ana+BES / Kalan:</b> Kayıt İsmi ile maaş kaydı bulunur, ilgili ödeme bloğu detay sayfasına yazılır; son <b>ÖDEME EKLE</b>'ye sen basarsın.",
   idle:
     "Excel satırlarını kopyalayıp aşağıya yapıştır. Sayfa değişse de veri kalır.<br>" +
@@ -75,7 +73,7 @@ export function updateFlowVisibility(flow, options = {}) {
   const salaryActions = $("#ajans-gider-salary-actions");
   const titleText = $("#ajans-gider-title-text");
   const helpContent = $("#ajans-gider-help-content");
-  const salaryMode = options.salaryMode || "expense";
+  const salaryMode = options.salaryMode || "main-bes";
   const canRunExpense = options.canRunExpense ?? flow === "expense";
   const canRunPayment = options.canRunPayment ?? flow === "payment";
   const canRunSalary = options.canRunSalary ?? flow === "salary";

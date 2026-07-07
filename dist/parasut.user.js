@@ -592,23 +592,6 @@
     });
     return records;
   }
-  function getSalaryRecords(text) {
-    const rows = Array.isArray(text) ? text : parseTable(text);
-    return rows.map((row, rowIndex) => ({
-      employee: row.supplier,
-      title: row.title,
-      amount: row.amount,
-      amountNumber: parseAmount(row.amount),
-      entitlementDate: row.issueDate,
-      entitlementDateText: row.issueDateText,
-      dueDate: row.dueDate,
-      dueDateText: row.dueDateText,
-      category: "maa\u015F",
-      rowIndex
-    })).filter(
-      (record) => record.employee && record.title && record.amountNumber && record.entitlementDateText && record.dueDateText
-    );
-  }
   function inspectTableParse(text) {
     const source = String(text || "");
     const rows = parseDelimitedText(source);
@@ -1818,10 +1801,6 @@
   }
 
   // src/parasut/salaryFlow.js
-  var RECORD_NAME_LABELS2 = ["KAYIT \u0130SM\u0130", "KAYIT ADI", "A\xC7IKLAMA"];
-  var ENTITLEMENT_DATE_LABELS = ["HAK ED\u0130\u015E TAR\u0130H\u0130", "HAKED\u0130\u015E TAR\u0130H\u0130"];
-  var DUE_DATE_LABELS2 = ["\xD6DENECE\u011E\u0130 TAR\u0130H", "\xD6DEME TAR\u0130H\u0130", "VADE TAR\u0130H\u0130"];
-  var AMOUNT_LABELS = ["TOPLAM TUTAR", "GENEL TOPLAM", "TUTAR"];
   var SALARY_PAYMENT_FORM_SELECTOR = "[class*='salary'][class*='payment-widget'], [class*='payment-widget-cash']";
   function textMatches2(candidate, wanted) {
     const a = norm(candidate);
@@ -2045,16 +2024,6 @@
     );
     await sleep(500);
   }
-  function findVisibleActionContaining(text, options = {}) {
-    const wanted = norm(text);
-    const selector = options.selector || "button, a";
-    const roots = options.roots || [options.root || getActiveAppDocument()];
-    for (const root of roots) {
-      const found = $$(selector, root).filter(isVisible).find((el) => norm(elementText(el)).includes(wanted));
-      if (found) return found;
-    }
-    return null;
-  }
   function findSalaryPaymentWidget() {
     const root = getActiveAppDocument();
     const candidates = $$(SALARY_PAYMENT_FORM_SELECTOR, root).filter(isVisible);
@@ -2168,95 +2137,6 @@
       }
     }
     return null;
-  }
-  function findSalaryMenuAction() {
-    const roots = getSearchRoots();
-    for (const root of roots) {
-      const dropdownRoots = getVisibleDropdownRoots(root);
-      const action = findVisibleActionContaining("YEN\u0130 MAA\u015E / PR\u0130M OLU\u015ETUR", {
-        roots: dropdownRoots,
-        selector: "a, button, li"
-      });
-      if (action) {
-        return action.matches("a, button") ? action : action.querySelector("a, button");
-      }
-    }
-    return findVisibleActionContaining("YEN\u0130 MAA\u015E / PR\u0130M OLU\u015ETUR", {
-      roots,
-      selector: "a, button"
-    });
-  }
-  async function openSalaryCreateForm() {
-    if (getSalaryStage() === "salary-form") return;
-    const moreButton = await waitFor(
-      () => findMoreMenuTrigger(),
-      8e3
-    ).catch(() => null);
-    if (!moreButton) throw new Error("'Di\u011Fer' butonu bulunamad\u0131.");
-    for (let attempt = 0; attempt < 3; attempt++) {
-      nativeClick(moreButton);
-      const salaryAction = await waitFor(() => findSalaryMenuAction(), 2500).catch(
-        () => null
-      );
-      if (salaryAction) {
-        clickLink2(salaryAction);
-        await waitFor(() => getSalaryStage() === "salary-form", 12e3);
-        await sleep(500);
-        return;
-      }
-      await sleep(300);
-    }
-    throw new Error("'Yeni Maa\u015F / Prim Olu\u015Ftur' se\xE7ene\u011Fi bulunamad\u0131.");
-  }
-  async function waitForSalaryFormReady() {
-    return waitFor(
-      () => findInputByLabels(RECORD_NAME_LABELS2, getActiveAppDocument()),
-      15e3
-    ).catch(() => null);
-  }
-  async function setSalaryDate(labelTexts, date, fieldName) {
-    const input = findInputByLabels(labelTexts, getActiveAppDocument());
-    if (!input) {
-      throw new Error(`${fieldName} alan\u0131 bulunamad\u0131.`);
-    }
-    setNativeValue(input, formatDateTR(date));
-    await sleep(150);
-  }
-  async function fillSalaryExpenseForm(record) {
-    if (!record.employee) throw new Error("\xC7al\u0131\u015Fan ad\u0131 bo\u015F.");
-    if (!record.title) throw new Error("Kay\u0131t ismi bo\u015F.");
-    if (!record.amount) throw new Error("Toplam tutar bo\u015F.");
-    if (!record.entitlementDateText) throw new Error("Hak edi\u015F tarihi bo\u015F.");
-    if (!record.dueDateText) throw new Error("\xD6denece\u011Fi tarih bo\u015F.");
-    const ready = await waitForSalaryFormReady();
-    if (!ready) {
-      throw new Error("Yeni Maa\u015F / Prim formu y\xFCklenmedi; Kay\u0131t \u0130smi alan\u0131 bulunamad\u0131.");
-    }
-    setRequiredField(RECORD_NAME_LABELS2, record.title, "Kay\u0131t ismi");
-    await setSalaryDate(
-      ENTITLEMENT_DATE_LABELS,
-      record.entitlementDate,
-      "Hak edi\u015F tarihi"
-    );
-    setRequiredField(
-      AMOUNT_LABELS,
-      formatAmountTR(record.amount),
-      "Toplam tutar"
-    );
-    await setSalaryDate(DUE_DATE_LABELS2, record.dueDate, "\xD6denece\u011Fi tarih");
-    await selectCategory(record.category || "maa\u015F");
-  }
-  async function runSalaryExpense(record, onProgress = () => {
-  }) {
-    if (!record) throw new Error("Maa\u015F kayd\u0131 yok.");
-    onProgress("\xC7al\u0131\u015Fanlar listesine gidiliyor...");
-    await goToEmployeesList();
-    onProgress(`\xC7al\u0131\u015Fan a\xE7\u0131l\u0131yor: ${record.employee}`);
-    await searchAndOpenEmployee(record.employee);
-    onProgress("Yeni maa\u015F / prim formu a\xE7\u0131l\u0131yor...");
-    await openSalaryCreateForm();
-    onProgress("Maa\u015F gideri alanlar\u0131 dolduruluyor...");
-    await fillSalaryExpenseForm(record);
   }
   async function runSalaryPayment(record, onProgress = () => {
   }) {
@@ -2385,10 +2265,10 @@
   }
   function getSalaryMode() {
     const value = localStorage.getItem(STORAGE_SALARY_MODE_KEY);
-    return ["expense", "main-bes", "remaining"].includes(value) ? value : "expense";
+    return ["main-bes", "remaining"].includes(value) ? value : "main-bes";
   }
   function setSalaryMode(mode) {
-    const safeMode = ["expense", "main-bes", "remaining"].includes(mode) ? mode : "expense";
+    const safeMode = ["main-bes", "remaining"].includes(mode) ? mode : "main-bes";
     localStorage.setItem(STORAGE_SALARY_MODE_KEY, safeMode);
   }
   function isPanelMinimized() {
@@ -2662,7 +2542,7 @@
 
       <div id="ajans-gider-salary-tabs" hidden style="
         display:grid;
-        grid-template-columns:1fr 1fr 1fr;
+        grid-template-columns:1fr 1fr;
         gap:4px;
         margin-bottom:10px;
         padding:3px;
@@ -2670,20 +2550,6 @@
         border:1px solid ${BORDER2};
         border-radius:9px;
       ">
-        <button type="button" data-salary-mode="expense" style="
-          min-width:0;
-          height:30px;
-          padding:0 6px;
-          border:0;
-          border-radius:7px;
-          background:transparent;
-          color:${MUTED2};
-          cursor:pointer;
-          font-size:11px;
-          font-weight:600;
-          font-family:inherit;
-          line-height:1.15;
-        ">Gider</button>
         <button type="button" data-salary-mode="main-bes" style="
           min-width:0;
           height:30px;
@@ -3172,14 +3038,13 @@
     idle: "Gider / \xD6deme Doldurucu"
   };
   var SALARY_MODE_LABELS = {
-    expense: "Gider",
     "main-bes": "Ana+BES",
     remaining: "Kalan"
   };
   var FLOW_HELP = {
     expense: "Excel sat\u0131rlar\u0131n\u0131 kopyalay\u0131p a\u015Fa\u011F\u0131ya yap\u0131\u015Ft\u0131r. Sayfa de\u011Fi\u015Fse de veri kal\u0131r.<br><b>S\xFCtunlar:</b> Ki\u015Fi \xB7 Marka \xB7 Tutar \xB7 Kay\u0131t \u0130smi<br>Se\xE7ili kayd\u0131 <b>Ana Gideri Doldur</b> ile yeni gider formuna yazar; detay sayfas\u0131ndaysan formu otomatik a\xE7ar. Kaydetmeyi sen yapars\u0131n.",
     payment: "Excel sat\u0131rlar\u0131n\u0131 kopyalay\u0131p a\u015Fa\u011F\u0131ya yap\u0131\u015Ft\u0131r. Sayfa de\u011Fi\u015Fse de veri kal\u0131r.<br><b>\xD6deme s\xFCtunlar\u0131:</b> \xD6deme Tutar\u0131 \xB7 \xD6deme Tarihi \xB7 \xD6deme Hesab\u0131<br>Birden fazla \xF6deme i\xE7in tutar/tarih/hesab\u0131 <b>/</b> ile ay\u0131r. <b>\xD6demeyi Ba\u015Flat</b> tedarik\xE7iyi bulup \xF6deme formunu doldurur; son <b>\xD6DEME EKLE</b>'ye sen basars\u0131n.",
-    salary: "Excel sat\u0131rlar\u0131n\u0131 kopyalay\u0131p a\u015Fa\u011F\u0131ya yap\u0131\u015Ft\u0131r. Sayfa de\u011Fi\u015Fse de veri kal\u0131r.<br><b>Gider:</b> \xC7al\u0131\u015Fan \xB7 Kay\u0131t \u0130smi \xB7 Hak Edi\u015F Tarihi \xB7 Toplam Tutar \xB7 \xD6denece\u011Fi Tarih<br><b>Ana+BES / Kalan:</b> Kay\u0131t \u0130smi ile maa\u015F kayd\u0131 bulunur, ilgili \xF6deme blo\u011Fu detay sayfas\u0131na yaz\u0131l\u0131r; son <b>\xD6DEME EKLE</b>'ye sen basars\u0131n.",
+    salary: "Excel sat\u0131rlar\u0131n\u0131 kopyalay\u0131p a\u015Fa\u011F\u0131ya yap\u0131\u015Ft\u0131r. Sayfa de\u011Fi\u015Fse de veri kal\u0131r.<br><b>Ana+BES / Kalan:</b> Kay\u0131t \u0130smi ile maa\u015F kayd\u0131 bulunur, ilgili \xF6deme blo\u011Fu detay sayfas\u0131na yaz\u0131l\u0131r; son <b>\xD6DEME EKLE</b>'ye sen basars\u0131n.",
     idle: "Excel sat\u0131rlar\u0131n\u0131 kopyalay\u0131p a\u015Fa\u011F\u0131ya yap\u0131\u015Ft\u0131r. Sayfa de\u011Fi\u015Fse de veri kal\u0131r.<br>Gider formu, tedarik\xE7i sayfas\u0131 veya \xE7al\u0131\u015Fanlar sayfas\u0131na gidince ilgili ara\xE7 \xE7\u0131kar."
   };
   function getRecordKind(flow) {
@@ -3217,7 +3082,7 @@
     const salaryActions = $("#ajans-gider-salary-actions");
     const titleText = $("#ajans-gider-title-text");
     const helpContent = $("#ajans-gider-help-content");
-    const salaryMode = options.salaryMode || "expense";
+    const salaryMode = options.salaryMode || "main-bes";
     const canRunExpense = options.canRunExpense ?? flow === "expense";
     const canRunPayment = options.canRunPayment ?? flow === "payment";
     const canRunSalary = options.canRunSalary ?? flow === "salary";
@@ -3437,7 +3302,6 @@
     remaining: ["Kalan Maa\u015F"]
   };
   var SALARY_MODE_BUTTON_TEXT = {
-    expense: "Maa\u015F Gideri Olu\u015Ftur",
     "main-bes": "Ana Maa\u015F / BES \xD6demesi",
     remaining: "Kalan Maa\u015F \xD6demesi"
   };
@@ -3479,15 +3343,12 @@
     }
     if (flow === "salary") {
       const salaryMode = getSalaryMode();
-      if (salaryMode !== "expense") {
-        return {
-          kind: "salary-payment",
-          items: getSalaryPaymentRecords(rows, {
-            paymentKinds: SALARY_PAYMENT_MODE_KINDS[salaryMode]
-          })
-        };
-      }
-      return { kind: "salary", items: getSalaryRecords(rows) };
+      return {
+        kind: "salary-payment",
+        items: getSalaryPaymentRecords(rows, {
+          paymentKinds: SALARY_PAYMENT_MODE_KINDS[salaryMode]
+        })
+      };
     }
     return { kind: "expense", items: rows };
   }
@@ -3609,13 +3470,11 @@
         );
       } else if (flow === "salary") {
         const hasText = String(textarea.value || "").trim().length > 0;
-        let message = "\xC7al\u0131\u015Fanlar sayfas\u0131ndas\u0131n. Excel'i yap\u0131\u015Ft\u0131r\u0131nca maa\u015F giderini olu\u015Fturabilirsin.";
-        if (salaryMode === "main-bes") {
-          message = hasText ? "Ana Maa\u015F / BES \xF6deme kayd\u0131 yok. Excel'de Ana Maa\u015F ve BES \xF6deme s\xFCtunlar\u0131n\u0131 kontrol et." : "Ana+BES sekmesindesin. Excel'i yap\u0131\u015Ft\u0131r\u0131nca kay\u0131t ismiyle maa\u015F\u0131 bulup \xF6demeyi doldurabilirsin.";
-        } else if (salaryMode === "remaining") {
+        let message;
+        if (salaryMode === "remaining") {
           message = hasText ? "Kalan maa\u015F \xF6deme kayd\u0131 yok. Excel'de Kalan Maa\u015F \xF6deme s\xFCtunlar\u0131n\u0131 kontrol et." : "Kalan sekmesindesin. Excel'i yap\u0131\u015Ft\u0131r\u0131nca kay\u0131t ismiyle maa\u015F\u0131 bulup kalan \xF6demeyi doldurabilirsin.";
-        } else if (hasText) {
-          message = "Maa\u015F kayd\u0131 yok. Excel'de \xC7al\u0131\u015Fan / Kay\u0131t \u0130smi / Hak Edi\u015F Tarihi / Toplam Tutar / \xD6denece\u011Fi Tarih s\xFCtunlar\u0131n\u0131 kontrol et.";
+        } else {
+          message = hasText ? "Ana Maa\u015F / BES \xF6deme kayd\u0131 yok. Excel'de Ana Maa\u015F ve BES \xF6deme s\xFCtunlar\u0131n\u0131 kontrol et." : "Ana+BES sekmesindesin. Excel'i yap\u0131\u015Ft\u0131r\u0131nca kay\u0131t ismiyle maa\u015F\u0131 bulup \xF6demeyi doldurabilirsin.";
         }
         setStatus(message);
       } else {
@@ -3817,48 +3676,33 @@
     });
     $("#ajans-gider-salary").addEventListener("click", async (event) => {
       const button = event.currentTarget;
-      let isSalaryPayment = false;
       if (isRunningSalary) return;
       isRunningSalary = true;
       setSalaryButtonLoading(button, true);
       try {
         clearPaymentWaitIfFormClosed();
-        const active = getActiveRecords("salary");
-        const records = active.items;
-        isSalaryPayment = active.kind === "salary-payment";
-        if (isSalaryPayment && salaryPaymentAwaitingManualSave && isSalaryPaymentFormOpen()) {
+        const records = getActiveRecords("salary").items;
+        if (salaryPaymentAwaitingManualSave && isSalaryPaymentFormOpen()) {
           throw new Error(
             'A\xE7\u0131k maa\u015F \xF6deme formu var. \xD6nce kontrol edip Para\u015F\xFCt i\xE7indeki son "\xD6DEME EKLE" butonuna manuel bas, form kapand\u0131ktan sonra sonraki \xF6demeye ge\xE7.'
           );
         }
         if (!records.length) {
           throw new Error(
-            isSalaryPayment ? getSalaryMode() === "main-bes" ? "Ana Maa\u015F / BES \xF6deme kayd\u0131 bulunamad\u0131. Excel'de Ana Maa\u015F ve BES \xF6deme s\xFCtunlar\u0131 var m\u0131?" : "Kalan maa\u015F \xF6deme kayd\u0131 bulunamad\u0131. Excel'de Kalan Maa\u015F \xF6deme s\xFCtunlar\u0131 var m\u0131?" : "Maa\u015F kayd\u0131 bulunamad\u0131. Excel'de \xC7al\u0131\u015Fan / Kay\u0131t \u0130smi / Hak Edi\u015F Tarihi / Toplam Tutar / \xD6denece\u011Fi Tarih s\xFCtunlar\u0131 var m\u0131?"
+            getSalaryMode() === "remaining" ? "Kalan maa\u015F \xF6deme kayd\u0131 bulunamad\u0131. Excel'de Kalan Maa\u015F \xF6deme s\xFCtunlar\u0131 var m\u0131?" : "Ana Maa\u015F / BES \xF6deme kayd\u0131 bulunamad\u0131. Excel'de Ana Maa\u015F ve BES \xF6deme s\xFCtunlar\u0131 var m\u0131?"
           );
         }
         const index = getSelectedIndex(records.length);
         const record = records[index];
+        setStatus(`${index + 1}. maa\u015F \xF6demesi dolduruluyor...`);
+        await runSalaryPayment(record, (message) => setStatus(message));
+        salaryPaymentAwaitingManualSave = true;
         setStatus(
-          isSalaryPayment ? `${index + 1}. maa\u015F \xF6demesi dolduruluyor...` : `${index + 1}. maa\u015F kayd\u0131 dolduruluyor...`
+          `Maa\u015F \xF6deme formu dolduruldu (${index + 1}/${records.length}). Kontrol edip "\xD6DEME EKLE"ye bas, sonra \u203A ile sonraki \xF6demeye ge\xE7.`,
+          "success"
         );
-        if (isSalaryPayment) {
-          await runSalaryPayment(record, (message) => setStatus(message));
-          salaryPaymentAwaitingManualSave = true;
-          setStatus(
-            `Maa\u015F \xF6deme formu dolduruldu (${index + 1}/${records.length}). Kontrol edip "\xD6DEME EKLE"ye bas, sonra \u203A ile sonraki \xF6demeye ge\xE7.`,
-            "success"
-          );
-        } else {
-          await runSalaryExpense(record, (message) => setStatus(message));
-          const advanced = advanceSelectionAfterSuccessfulFill(index, records.length);
-          const nextMessage = advanced ? ` ${index + 2}. kayda ge\xE7ildi.` : " Son kay\u0131ttas\u0131n.";
-          setStatus(
-            `Maa\u015F gideri forma dolduruldu (${index + 1}/${records.length}).${nextMessage} Kaydetme i\u015Flemini manuel yap.`,
-            "success"
-          );
-        }
       } catch (err) {
-        console.error("[AJANS] Maa\u015F gideri hatas\u0131:", err);
+        console.error("[AJANS] Maa\u015F \xF6deme hatas\u0131:", err);
         setStatus(err.message || String(err), true);
       } finally {
         isRunningSalary = false;

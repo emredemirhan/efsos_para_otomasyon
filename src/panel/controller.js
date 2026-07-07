@@ -3,7 +3,6 @@ import { formatAmountTR } from "../core/format.js";
 import {
   getPaymentRecords,
   getSalaryPaymentRecords,
-  getSalaryRecords,
   parseTable,
 } from "../core/tableParser.js";
 import { fillExpense } from "../parasut/expenseFlow.js";
@@ -11,7 +10,6 @@ import { goToNewExpenseForm } from "../parasut/expenseNavigation.js";
 import { runPayment } from "../parasut/paymentFlow.js";
 import {
   isSalaryPaymentFormOpen,
-  runSalaryExpense,
   runSalaryPayment,
 } from "../parasut/salaryFlow.js";
 import { $, getActiveAppDocument } from "../parasut/dom.js";
@@ -71,7 +69,6 @@ const SALARY_PAYMENT_MODE_KINDS = {
 };
 
 const SALARY_MODE_BUTTON_TEXT = {
-  expense: "Maaş Gideri Oluştur",
   "main-bes": "Ana Maaş / BES Ödemesi",
   remaining: "Kalan Maaş Ödemesi",
 };
@@ -127,16 +124,12 @@ function getActiveRecords(flow = getCurrentFlow()) {
   if (flow === "salary") {
     const salaryMode = getSalaryMode();
 
-    if (salaryMode !== "expense") {
-      return {
-        kind: "salary-payment",
-        items: getSalaryPaymentRecords(rows, {
-          paymentKinds: SALARY_PAYMENT_MODE_KINDS[salaryMode],
-        }),
-      };
-    }
-
-    return { kind: "salary", items: getSalaryRecords(rows) };
+    return {
+      kind: "salary-payment",
+      items: getSalaryPaymentRecords(rows, {
+        paymentKinds: SALARY_PAYMENT_MODE_KINDS[salaryMode],
+      }),
+    };
   }
 
   return { kind: "expense", items: rows };
@@ -298,20 +291,16 @@ function syncPanelRows() {
       );
     } else if (flow === "salary") {
       const hasText = String(textarea.value || "").trim().length > 0;
-      let message =
-        "Çalışanlar sayfasındasın. Excel'i yapıştırınca maaş giderini oluşturabilirsin.";
+      let message;
 
-      if (salaryMode === "main-bes") {
-        message = hasText
-          ? "Ana Maaş / BES ödeme kaydı yok. Excel'de Ana Maaş ve BES ödeme sütunlarını kontrol et."
-          : "Ana+BES sekmesindesin. Excel'i yapıştırınca kayıt ismiyle maaşı bulup ödemeyi doldurabilirsin.";
-      } else if (salaryMode === "remaining") {
+      if (salaryMode === "remaining") {
         message = hasText
           ? "Kalan maaş ödeme kaydı yok. Excel'de Kalan Maaş ödeme sütunlarını kontrol et."
           : "Kalan sekmesindesin. Excel'i yapıştırınca kayıt ismiyle maaşı bulup kalan ödemeyi doldurabilirsin.";
-      } else if (hasText) {
-        message =
-          "Maaş kaydı yok. Excel'de Çalışan / Kayıt İsmi / Hak Ediş Tarihi / Toplam Tutar / Ödeneceği Tarih sütunlarını kontrol et.";
+      } else {
+        message = hasText
+          ? "Ana Maaş / BES ödeme kaydı yok. Excel'de Ana Maaş ve BES ödeme sütunlarını kontrol et."
+          : "Ana+BES sekmesindesin. Excel'i yapıştırınca kayıt ismiyle maaşı bulup ödemeyi doldurabilirsin.";
       }
 
       setStatus(message);
@@ -561,7 +550,6 @@ function registerPanelEvents(panel) {
 
   $("#ajans-gider-salary").addEventListener("click", async (event) => {
     const button = event.currentTarget;
-    let isSalaryPayment = false;
 
     if (isRunningSalary) return;
     isRunningSalary = true;
@@ -570,15 +558,9 @@ function registerPanelEvents(panel) {
     try {
       clearPaymentWaitIfFormClosed();
 
-      const active = getActiveRecords("salary");
-      const records = active.items;
-      isSalaryPayment = active.kind === "salary-payment";
+      const records = getActiveRecords("salary").items;
 
-      if (
-        isSalaryPayment &&
-        salaryPaymentAwaitingManualSave &&
-        isSalaryPaymentFormOpen()
-      ) {
+      if (salaryPaymentAwaitingManualSave && isSalaryPaymentFormOpen()) {
         throw new Error(
           'Açık maaş ödeme formu var. Önce kontrol edip Paraşüt içindeki son "ÖDEME EKLE" butonuna manuel bas, form kapandıktan sonra sonraki ödemeye geç.',
         );
@@ -586,46 +568,26 @@ function registerPanelEvents(panel) {
 
       if (!records.length) {
         throw new Error(
-          isSalaryPayment
-            ? getSalaryMode() === "main-bes"
-              ? "Ana Maaş / BES ödeme kaydı bulunamadı. Excel'de Ana Maaş ve BES ödeme sütunları var mı?"
-              : "Kalan maaş ödeme kaydı bulunamadı. Excel'de Kalan Maaş ödeme sütunları var mı?"
-            : "Maaş kaydı bulunamadı. Excel'de Çalışan / Kayıt İsmi / Hak Ediş Tarihi / Toplam Tutar / Ödeneceği Tarih sütunları var mı?",
+          getSalaryMode() === "remaining"
+            ? "Kalan maaş ödeme kaydı bulunamadı. Excel'de Kalan Maaş ödeme sütunları var mı?"
+            : "Ana Maaş / BES ödeme kaydı bulunamadı. Excel'de Ana Maaş ve BES ödeme sütunları var mı?",
         );
       }
 
       const index = getSelectedIndex(records.length);
       const record = records[index];
 
+      setStatus(`${index + 1}. maaş ödemesi dolduruluyor...`);
+
+      await runSalaryPayment(record, (message) => setStatus(message));
+      salaryPaymentAwaitingManualSave = true;
+
       setStatus(
-        isSalaryPayment
-          ? `${index + 1}. maaş ödemesi dolduruluyor...`
-          : `${index + 1}. maaş kaydı dolduruluyor...`,
+        `Maaş ödeme formu dolduruldu (${index + 1}/${records.length}). Kontrol edip "ÖDEME EKLE"ye bas, sonra › ile sonraki ödemeye geç.`,
+        "success",
       );
-
-      if (isSalaryPayment) {
-        await runSalaryPayment(record, (message) => setStatus(message));
-        salaryPaymentAwaitingManualSave = true;
-
-        setStatus(
-          `Maaş ödeme formu dolduruldu (${index + 1}/${records.length}). Kontrol edip "ÖDEME EKLE"ye bas, sonra › ile sonraki ödemeye geç.`,
-          "success",
-        );
-      } else {
-        await runSalaryExpense(record, (message) => setStatus(message));
-
-        const advanced = advanceSelectionAfterSuccessfulFill(index, records.length);
-        const nextMessage = advanced
-          ? ` ${index + 2}. kayda geçildi.`
-          : " Son kayıttasın.";
-
-        setStatus(
-          `Maaş gideri forma dolduruldu (${index + 1}/${records.length}).${nextMessage} Kaydetme işlemini manuel yap.`,
-          "success",
-        );
-      }
     } catch (err) {
-      console.error("[AJANS] Maaş gideri hatası:", err);
+      console.error("[AJANS] Maaş ödeme hatası:", err);
       setStatus(err.message || String(err), true);
     } finally {
       isRunningSalary = false;

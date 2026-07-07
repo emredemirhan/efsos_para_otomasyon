@@ -112,13 +112,11 @@ export function clearSelectionState() {
 export function getSalaryMode() {
   const value = localStorage.getItem(STORAGE_SALARY_MODE_KEY);
 
-  return ["expense", "main-bes", "remaining"].includes(value) ? value : "expense";
+  return ["main-bes", "remaining"].includes(value) ? value : "main-bes";
 }
 
 export function setSalaryMode(mode) {
-  const safeMode = ["expense", "main-bes", "remaining"].includes(mode)
-    ? mode
-    : "expense";
+  const safeMode = ["main-bes", "remaining"].includes(mode) ? mode : "main-bes";
 
   localStorage.setItem(STORAGE_SALARY_MODE_KEY, safeMode);
 }
