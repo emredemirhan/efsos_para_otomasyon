@@ -13,6 +13,7 @@ import {
 } from "./dom.js";
 import { setLegacyPikadayDate } from "./datepicker.js";
 import { getPaymentStage } from "./pageDetection.js";
+import { findRecordLinkWithHistory } from "./transactionHistory.js";
 
 function textMatches(candidate, wanted) {
   const a = norm(candidate);
@@ -170,24 +171,18 @@ async function searchAndOpenSupplier(supplierName) {
   );
 }
 
-function findExpenseItemLink(itemName) {
-  const root = getActiveAppDocument();
-
-  const billLinks = $$("a[href]", root).filter(
-    (a) => /\/fis-faturalar\/\d+/.test(hrefPath(a)) && isVisible(a),
-  );
-  const byHref = pickAnchorByText(billLinks, itemName, "[data-test-description]");
-  if (byHref) return byHref;
-
-  const descriptions = $$("[data-test-description]", root).filter(isVisible);
-  const target = findByText(descriptions, itemName);
-  return target ? target.closest("a[href]") || target.closest("a") : null;
-}
-
-async function openExpenseItem(record) {
-  const link = await waitFor(() => findExpenseItemLink(record.itemName), 9000).catch(
-    () => null,
-  );
+async function openExpenseItem(record, onProgress = () => {}) {
+  const link = await findRecordLinkWithHistory(record.itemName, {
+    hrefPattern: /\/fis-faturalar\/\d+/,
+    labelSelectors: [
+      "[data-test-description]",
+      "[data-test-contact-show-tx-history-row-description]",
+    ],
+    clickLink,
+    onProgress,
+    historyProgress: `İşlem geçmişinde aranıyor: ${record.itemName}`,
+    secondPageProgress: `İşlem geçmişi 2. sayfa kontrol ediliyor: ${record.itemName}`,
+  });
 
   if (!link) {
     throw new Error(`Gider kalemi bulunamadı: ${record.itemName}`);
@@ -538,7 +533,7 @@ export async function runPayment(record, onProgress = () => {}) {
   await searchAndOpenSupplier(record.supplier);
 
   onProgress(`Gider kalemi açılıyor: ${record.itemName}`);
-  await openExpenseItem(record);
+  await openExpenseItem(record, onProgress);
 
   onProgress("Ödeme formu açılıyor...");
   await openPaymentForm();

@@ -14,6 +14,7 @@ import {
 import { selectCategory } from "./dropdowns.js";
 import { findInputByLabels, setRequiredField } from "./fields.js";
 import { getSalaryStage } from "./pageDetection.js";
+import { findRecordLinkWithHistory } from "./transactionHistory.js";
 
 const RECORD_NAME_LABELS = ["KAYIT İSMİ", "KAYIT ADI", "AÇIKLAMA"];
 const ENTITLEMENT_DATE_LABELS = ["HAK EDİŞ TARİHİ", "HAKEDİŞ TARİHİ"];
@@ -279,28 +280,18 @@ async function searchAndOpenEmployee(employeeName) {
   ).catch(() => null);
 }
 
-function findSalaryItemLink(salaryTitle) {
-  const root = getActiveAppDocument();
-
-  const salaryLinks = $$("a[href]", root).filter(
-    (a) => /\/(?:giderler\/)?maaslar\/\d+/.test(hrefPath(a)) && isVisible(a),
-  );
-  const byHref = pickAnchorByText(
-    salaryLinks,
-    salaryTitle,
-    "[data-test-row-description]",
-  );
-  if (byHref) return byHref;
-
-  const descriptions = $$("[data-test-row-description]", root).filter(isVisible);
-  const target = findByText(descriptions, salaryTitle);
-  return target ? target.closest("a[href]") || target.closest("a") : null;
-}
-
-async function openSalaryItem(salaryTitle) {
-  const link = await waitFor(() => findSalaryItemLink(salaryTitle), 9000).catch(
-    () => null,
-  );
+async function openSalaryItem(salaryTitle, onProgress = () => {}) {
+  const link = await findRecordLinkWithHistory(salaryTitle, {
+    hrefPattern: /\/(?:giderler\/)?maaslar\/\d+/,
+    labelSelectors: [
+      "[data-test-row-description]",
+      "[data-test-contact-show-tx-history-row-description]",
+    ],
+    clickLink,
+    onProgress,
+    historyProgress: `İşlem geçmişinde maaş kaydı aranıyor: ${salaryTitle}`,
+    secondPageProgress: `İşlem geçmişi 2. sayfada maaş kaydı kontrol ediliyor: ${salaryTitle}`,
+  });
 
   if (!link) {
     throw new Error(`Maaş gider kaydı bulunamadı: ${salaryTitle}`);
@@ -636,7 +627,7 @@ export async function runSalaryPayment(record, onProgress = () => {}) {
   await searchAndOpenEmployee(record.employee);
 
   onProgress(`Maaş kaydı açılıyor: ${record.salaryTitle}`);
-  await openSalaryItem(record.salaryTitle);
+  await openSalaryItem(record.salaryTitle, onProgress);
 
   onProgress("Maaş ödeme formu açılıyor...");
   await openSalaryPaymentForm();
